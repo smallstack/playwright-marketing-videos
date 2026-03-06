@@ -1,0 +1,8 @@
+pre-commit:
+  commands:
+    lint:
+      run: npx @biomejs/biome check --write src && git add -u
+commit-msg:
+  commands:
+    commitlint:
+      run: npx commitlint --edit {1}

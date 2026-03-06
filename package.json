@@ -1,0 +1,74 @@
+{
+	"name": "playwright-marketing-videos",
+	"version": "0.1.0",
+	"description": "Playwright tools for creating polished marketing videos with realistic mouse movements, typing animations, audio voice-overs, banners, and more",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"import": "./dist/index.js",
+			"types": "./dist/index.d.ts"
+		}
+	},
+	"scripts": {
+		"build": "tsc",
+		"lint": "biome lint src",
+		"lint:fix": "biome check --write src",
+		"format": "biome format --write src",
+		"prepare": "lefthook install",
+		"prepublishOnly": "npm run build"
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"dependencies": {
+		"@elevenlabs/elevenlabs-js": "^2.33.0"
+	},
+	"peerDependencies": {
+		"@playwright/test": ">=1.40.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.3",
+		"@commitlint/cli": "^20.4.2",
+		"@commitlint/config-conventional": "^20.4.2",
+		"@playwright/test": "^1.58.2",
+		"@types/node": "^22.0.0",
+		"lefthook": "^2.1.1",
+		"typescript": "^5.6.0"
+	},
+	"engines": {
+		"node": ">=18"
+	},
+	"keywords": [
+		"playwright",
+		"marketing",
+		"video",
+		"automation",
+		"cursor",
+		"animation",
+		"elevenlabs",
+		"text-to-speech",
+		"tts",
+		"demo",
+		"screencast"
+	],
+	"author": {
+		"name": "smallstack GmbH",
+		"url": "https://smallstack.com"
+	},
+	"homepage": "https://github.com/smallstack/playwright-marketing-videos#readme",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/smallstack/playwright-marketing-videos.git"
+	},
+	"bugs": {
+		"url": "https://github.com/smallstack/playwright-marketing-videos/issues"
+	},
+	"license": "MIT",
+	"publishConfig": {
+		"access": "public"
+	}
+}
