@@ -94,6 +94,10 @@ export interface VideoProvider {
 		prompt: string;
 		durationSec: number;
 		aspectRatio: string;
+		/** Directory used for caching — providers can store intermediate state here (e.g. pending task IDs). */
+		cacheDir?: string;
+		/** Unique hash key for this request — useful for naming state files. */
+		cacheKey?: string;
 	}): Promise<Buffer>;
 }
 
@@ -1085,7 +1089,7 @@ export async function playAudio(
 // Video Overlay — Provider: Runway
 // ============================================================================
 
-const RUNWAY_API_BASE = "https://api.runwayml.com/v1";
+const RUNWAY_API_BASE = "https://api.dev.runwayml.com/v1";
 const RUNWAY_API_VERSION = "2024-11-06";
 const RUNWAY_POLL_INTERVAL_MS = 5000;
 const RUNWAY_TIMEOUT_MS = 600_000;
@@ -1156,48 +1160,102 @@ async function runwayPollUntilDone(
 
 /**
  * Runway video provider using the Gen-4 Turbo text-to-video API.
- * Requires RUNWAYML_API_KEY environment variable.
+ * Accepts an API key directly or falls back to the RUNWAYML_API_KEY environment variable.
  */
 export class RunwayVideoProvider implements VideoProvider {
 	readonly name = "runway";
 	private readonly model: string;
+	private readonly apiKey?: string;
 
-	constructor(model?: string) {
-		this.model = model ?? "gen4_turbo";
+	constructor(options?: { model?: string; apiKey?: string }) {
+		this.model = options?.model ?? "gen4_turbo";
+		this.apiKey = options?.apiKey;
 	}
 
 	async generate(options: {
 		prompt: string;
 		durationSec: number;
 		aspectRatio: string;
+		cacheDir?: string;
+		cacheKey?: string;
 	}): Promise<Buffer> {
-		const apiKey = process.env.RUNWAYML_API_KEY;
+		const apiKey = this.apiKey ?? process.env.RUNWAYML_API_KEY;
 		if (!apiKey) {
 			throw new Error(
-				"RUNWAYML_API_KEY environment variable is not set. Please set it to use Runway video generation."
+				"No Runway API key provided. Pass it to the RunwayVideoProvider constructor or set the RUNWAYML_API_KEY environment variable."
 			);
 		}
 
 		const ratio = options.aspectRatio === "9:16" ? "720:1280" : "1280:720";
 
-		console.log(
-			`[runway] Creating text-to-video task: "${options.prompt.substring(0, 60)}..." (${options.durationSec}s, ${ratio})`
-		);
+		// Check for a pending task from a previous (timed-out) run
+		const taskFile =
+			options.cacheDir && options.cacheKey
+				? path.join(options.cacheDir, `${options.cacheKey}.runway-task`)
+				: null;
 
-		const createResponse = await runwayFetch(apiKey, "/text_to_video", {
-			method: "POST",
-			body: JSON.stringify({
-				model: this.model,
-				promptText: options.prompt,
-				ratio,
-				duration: options.durationSec
-			})
-		});
+		let taskId: string | null = null;
 
-		const { id: taskId } = (await createResponse.json()) as { id: string };
-		console.log(`[runway] Task created: ${taskId}, polling for completion...`);
+		if (taskFile && fs.existsSync(taskFile)) {
+			taskId = fs.readFileSync(taskFile, "utf-8").trim();
+			console.log(`[runway] Resuming previous task: ${taskId}`);
+
+			// Verify the task is still active before resuming
+			try {
+				const response = await runwayFetch(apiKey, `/tasks/${taskId}`);
+				const task = (await response.json()) as {
+					status: string;
+					failure?: string;
+				};
+				if (task.status === "FAILED" || task.status === "CANCELED") {
+					console.log(
+						`[runway] Previous task ${task.status.toLowerCase()}, starting a new one`
+					);
+					taskId = null;
+					fs.unlinkSync(taskFile);
+				}
+			} catch {
+				console.log(
+					"[runway] Could not check previous task status, starting a new one"
+				);
+				taskId = null;
+				fs.unlinkSync(taskFile);
+			}
+		}
+
+		if (!taskId) {
+			console.log(
+				`[runway] Creating text-to-video task: "${options.prompt.substring(0, 60)}..." (${options.durationSec}s, ${ratio})`
+			);
+
+			const createResponse = await runwayFetch(apiKey, "/text_to_video", {
+				method: "POST",
+				body: JSON.stringify({
+					model: this.model,
+					promptText: options.prompt,
+					ratio,
+					duration: options.durationSec
+				})
+			});
+
+			const result = (await createResponse.json()) as { id: string };
+			taskId = result.id;
+
+			// Persist the task ID so a subsequent run can resume polling
+			if (taskFile) {
+				fs.writeFileSync(taskFile, taskId, "utf-8");
+			}
+		}
+
+		console.log(`[runway] Task ${taskId}, polling for completion...`);
 
 		const outputUrls = await runwayPollUntilDone(apiKey, taskId);
+
+		// Clean up the task file once we have a result
+		if (taskFile && fs.existsSync(taskFile)) {
+			fs.unlinkSync(taskFile);
+		}
+
 		const videoUrl = outputUrls[0];
 		console.log(`[runway] Task completed, downloading video...`);
 
@@ -1267,7 +1325,9 @@ export async function generateVideoOverlay(
 		const buffer = await provider.generate({
 			prompt,
 			durationSec,
-			aspectRatio
+			aspectRatio,
+			cacheDir,
+			cacheKey: hash
 		});
 
 		fs.writeFileSync(filePath, buffer);
