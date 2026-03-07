@@ -1,6 +1,6 @@
 {
 	"name": "playwright-marketing-videos",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Playwright tools for creating polished marketing videos with realistic mouse movements, typing animations, audio voice-overs, banners, and more",
 	"type": "module",
 	"main": "./dist/index.js",
