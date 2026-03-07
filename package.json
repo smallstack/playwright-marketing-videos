@@ -55,7 +55,10 @@
 		"text-to-speech",
 		"tts",
 		"demo",
-		"screencast"
+		"screencast",
+		"video-overlay",
+		"ai-video",
+		"runway"
 	],
 	"author": {
 		"name": "smallstack GmbH",

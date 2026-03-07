@@ -68,6 +68,39 @@ export type MoveMouseInNiceCurveOptions = {
 	seed?: number;
 };
 
+// ---- Video Overlay Types ----
+
+export type VideoOverlay = {
+	filePath: string;
+	prompt: string;
+	durationSec: number;
+};
+
+export type GenerateVideoOverlayOptions = {
+	prompt: string;
+	durationSec?: number;
+	aspectRatio?: "16:9" | "9:16";
+	provider?: VideoProvider;
+};
+
+/**
+ * Provider interface for AI video generation services.
+ * Implement this to add support for additional video generation APIs
+ * (e.g. Kling, Luma, Stability, Pika).
+ */
+export interface VideoProvider {
+	readonly name: string;
+	generate(options: {
+		prompt: string;
+		durationSec: number;
+		aspectRatio: string;
+		/** Directory used for caching — providers can store intermediate state here (e.g. pending task IDs). */
+		cacheDir?: string;
+		/** Unique hash key for this request — useful for naming state files. */
+		cacheKey?: string;
+	}): Promise<Buffer>;
+}
+
 // ============================================================================
 // State
 // ============================================================================
@@ -1050,6 +1083,356 @@ export async function playAudio(
 			}
 		});
 	}
+}
+
+// ============================================================================
+// Video Overlay — Provider: Runway
+// ============================================================================
+
+const RUNWAY_API_BASE = "https://api.dev.runwayml.com/v1";
+const RUNWAY_API_VERSION = "2024-11-06";
+const RUNWAY_POLL_INTERVAL_MS = 5000;
+const RUNWAY_TIMEOUT_MS = 600_000;
+
+async function runwayFetch(
+	apiKey: string,
+	endpoint: string,
+	options: RequestInit = {}
+): Promise<Response> {
+	const response = await fetch(`${RUNWAY_API_BASE}${endpoint}`, {
+		...options,
+		headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"X-Runway-Version": RUNWAY_API_VERSION,
+			"Content-Type": "application/json",
+			...options.headers
+		}
+	});
+
+	if (!response.ok) {
+		const body = await response.text().catch(() => "");
+		throw new Error(
+			`Runway API error ${response.status}: ${response.statusText}${body ? ` — ${body}` : ""}`
+		);
+	}
+
+	return response;
+}
+
+async function runwayPollUntilDone(
+	apiKey: string,
+	taskId: string
+): Promise<string[]> {
+	const deadline = Date.now() + RUNWAY_TIMEOUT_MS;
+
+	while (Date.now() < deadline) {
+		const response = await runwayFetch(apiKey, `/tasks/${taskId}`);
+		const task = (await response.json()) as {
+			status: string;
+			output?: string[];
+			failure?: string;
+		};
+
+		if (task.status === "SUCCEEDED") {
+			if (!task.output || task.output.length === 0) {
+				throw new Error("Runway task succeeded but returned no output URLs");
+			}
+			return task.output;
+		}
+
+		if (task.status === "FAILED") {
+			throw new Error(
+				`Runway task failed: ${task.failure ?? "unknown reason"}`
+			);
+		}
+
+		if (task.status === "CANCELED") {
+			throw new Error("Runway task was canceled");
+		}
+
+		await new Promise((r) => setTimeout(r, RUNWAY_POLL_INTERVAL_MS));
+	}
+
+	throw new Error(
+		`Runway task ${taskId} timed out after ${RUNWAY_TIMEOUT_MS / 1000}s`
+	);
+}
+
+/**
+ * Runway video provider using the Gen-4 Turbo text-to-video API.
+ * Accepts an API key directly or falls back to the RUNWAYML_API_KEY environment variable.
+ */
+export class RunwayVideoProvider implements VideoProvider {
+	readonly name = "runway";
+	private readonly model: string;
+	private readonly apiKey?: string;
+
+	constructor(options?: { model?: string; apiKey?: string }) {
+		this.model = options?.model ?? "gen4_turbo";
+		this.apiKey = options?.apiKey;
+	}
+
+	async generate(options: {
+		prompt: string;
+		durationSec: number;
+		aspectRatio: string;
+		cacheDir?: string;
+		cacheKey?: string;
+	}): Promise<Buffer> {
+		const apiKey = this.apiKey ?? process.env.RUNWAYML_API_KEY;
+		if (!apiKey) {
+			throw new Error(
+				"No Runway API key provided. Pass it to the RunwayVideoProvider constructor or set the RUNWAYML_API_KEY environment variable."
+			);
+		}
+
+		const ratio = options.aspectRatio === "9:16" ? "720:1280" : "1280:720";
+
+		// Check for a pending task from a previous (timed-out) run
+		const taskFile =
+			options.cacheDir && options.cacheKey
+				? path.join(options.cacheDir, `${options.cacheKey}.runway-task`)
+				: null;
+
+		let taskId: string | null = null;
+
+		if (taskFile && fs.existsSync(taskFile)) {
+			taskId = fs.readFileSync(taskFile, "utf-8").trim();
+			console.log(`[runway] Resuming previous task: ${taskId}`);
+
+			// Verify the task is still active before resuming
+			try {
+				const response = await runwayFetch(apiKey, `/tasks/${taskId}`);
+				const task = (await response.json()) as {
+					status: string;
+					failure?: string;
+				};
+				if (task.status === "FAILED" || task.status === "CANCELED") {
+					console.log(
+						`[runway] Previous task ${task.status.toLowerCase()}, starting a new one`
+					);
+					taskId = null;
+					fs.unlinkSync(taskFile);
+				}
+			} catch {
+				console.log(
+					"[runway] Could not check previous task status, starting a new one"
+				);
+				taskId = null;
+				fs.unlinkSync(taskFile);
+			}
+		}
+
+		if (!taskId) {
+			console.log(
+				`[runway] Creating text-to-video task: "${options.prompt.substring(0, 60)}..." (${options.durationSec}s, ${ratio})`
+			);
+
+			const createResponse = await runwayFetch(apiKey, "/text_to_video", {
+				method: "POST",
+				body: JSON.stringify({
+					model: this.model,
+					promptText: options.prompt,
+					ratio,
+					duration: options.durationSec
+				})
+			});
+
+			const result = (await createResponse.json()) as { id: string };
+			taskId = result.id;
+
+			// Persist the task ID so a subsequent run can resume polling
+			if (taskFile) {
+				fs.writeFileSync(taskFile, taskId, "utf-8");
+			}
+		}
+
+		console.log(`[runway] Task ${taskId}, polling for completion...`);
+
+		const outputUrls = await runwayPollUntilDone(apiKey, taskId);
+
+		// Clean up the task file once we have a result
+		if (taskFile && fs.existsSync(taskFile)) {
+			fs.unlinkSync(taskFile);
+		}
+
+		const videoUrl = outputUrls[0];
+		console.log(`[runway] Task completed, downloading video...`);
+
+		const videoResponse = await fetch(videoUrl);
+		if (!videoResponse.ok) {
+			throw new Error(
+				`Failed to download Runway video: ${videoResponse.status}`
+			);
+		}
+
+		return Buffer.from(await videoResponse.arrayBuffer());
+	}
+}
+
+// ============================================================================
+// Video Overlay — Generate & Play
+// ============================================================================
+
+const defaultVideoProvider = new RunwayVideoProvider();
+
+/**
+ * Generates a short AI video clip from a text prompt.
+ * Caches the result locally to avoid regenerating the same video.
+ *
+ * The cache directory (`__video_cache/`) is created in the current working
+ * directory. Files are named by a SHA-256 hash of the prompt + duration +
+ * aspect ratio so identical requests are served from disk.
+ *
+ * @param options - Prompt, duration, and provider configuration
+ * @returns VideoOverlay with the file path to the generated/cached MP4
+ */
+export async function generateVideoOverlay(
+	options: GenerateVideoOverlayOptions
+): Promise<VideoOverlay> {
+	const {
+		prompt,
+		durationSec = 5,
+		aspectRatio = "16:9",
+		provider = defaultVideoProvider
+	} = options;
+
+	const cacheDir = path.join(process.cwd(), "__video_cache");
+
+	if (!fs.existsSync(cacheDir)) {
+		fs.mkdirSync(cacheDir, { recursive: true });
+	}
+
+	const hash = crypto
+		.createHash("sha256")
+		.update(prompt + durationSec + aspectRatio + provider.name)
+		.digest("hex")
+		.substring(0, 16);
+
+	const fileName = `${hash}.mp4`;
+	const filePath = path.join(cacheDir, fileName);
+
+	if (fs.existsSync(filePath)) {
+		console.log(`Using cached video: ${fileName}`);
+		return { filePath, prompt, durationSec };
+	}
+
+	console.log(
+		`Generating video overlay (${provider.name}): "${prompt.substring(0, 50)}..."`
+	);
+
+	try {
+		const buffer = await provider.generate({
+			prompt,
+			durationSec,
+			aspectRatio,
+			cacheDir,
+			cacheKey: hash
+		});
+
+		fs.writeFileSync(filePath, buffer);
+		console.log(`Video generated and cached: ${fileName}`);
+
+		return { filePath, prompt, durationSec };
+	} catch (error) {
+		throw new Error(
+			`Failed to generate video overlay via ${provider.name}: ${error instanceof Error ? error.message : String(error)}`
+		);
+	}
+}
+
+/**
+ * Plays a video overlay as a full-screen layer on the Playwright page.
+ * The video is injected as a base64-encoded `<video>` element that covers the
+ * entire viewport — Playwright's native video recording captures it as part
+ * of the page, so no external editing is needed.
+ *
+ * @param page - Playwright page instance
+ * @param overlay - VideoOverlay object from generateVideoOverlay
+ * @param waitForVideoToFinish - Whether to wait for the video to finish before returning (default: true)
+ */
+export async function playVideoOverlay(
+	page: Page,
+	overlay: VideoOverlay,
+	waitForVideoToFinish: boolean = true
+): Promise<void> {
+	const videoBuffer = fs.readFileSync(overlay.filePath);
+	const videoBase64 = videoBuffer.toString("base64");
+
+	await hideCursor(page);
+
+	await page.evaluate(
+		({ video }) => {
+			const oldVideo = document.getElementById(
+				"playwright-marketing-video-overlay"
+			);
+			if (oldVideo) oldVideo.remove();
+
+			const videoElement = document.createElement("video");
+			videoElement.id = "playwright-marketing-video-overlay";
+			videoElement.style.cssText = `
+				position: fixed !important;
+				top: 0 !important;
+				left: 0 !important;
+				width: 100vw !important;
+				height: 100vh !important;
+				object-fit: cover !important;
+				z-index: 2147483647 !important;
+				pointer-events: none !important;
+				margin: 0 !important;
+				padding: 0 !important;
+				border: none !important;
+			`;
+
+			videoElement.src = `data:video/mp4;base64,${video}`;
+			videoElement.muted = true;
+			videoElement.autoplay = false;
+			videoElement.playsInline = true;
+
+			document.body.appendChild(videoElement);
+		},
+		{ video: videoBase64 }
+	);
+
+	const duration = await page.evaluate(() => {
+		const videoElement = document.getElementById(
+			"playwright-marketing-video-overlay"
+		) as HTMLVideoElement;
+		return new Promise<number>((resolve) => {
+			if (videoElement.duration && !Number.isNaN(videoElement.duration)) {
+				resolve(videoElement.duration * 1000);
+			} else {
+				videoElement.addEventListener("loadedmetadata", () => {
+					resolve(videoElement.duration * 1000);
+				});
+			}
+		});
+	});
+
+	await page.waitForTimeout(100);
+
+	await page.evaluate(async () => {
+		await (
+			document.getElementById(
+				"playwright-marketing-video-overlay"
+			) as HTMLVideoElement
+		).play();
+	});
+
+	if (waitForVideoToFinish && !Number.isNaN(duration) && duration > 0) {
+		await page.waitForTimeout(duration);
+
+		await page.evaluate(() => {
+			const videoElement = document.getElementById(
+				"playwright-marketing-video-overlay"
+			);
+			if (videoElement) {
+				videoElement.remove();
+			}
+		});
+	}
+
+	await showCursor(page);
 }
 
 // ============================================================================
