@@ -178,51 +178,71 @@ await showScrollAnimation(page);  // Show a mouse-scroll indicator near the curs
 await hideScrollAnimation(page);  // Remove the scroll indicator
 ```
 
-## Audio / Voice-Over (ElevenLabs)
+## Audio / Voice-Over
 
-Generate text-to-speech audio files and play them in your marketing videos.
+Generate text-to-speech audio files and play them in your marketing videos. Two TTS providers are supported:
 
-### Setting the API Key
+- **Kokoro** (default) — free, local, high-quality neural TTS via [kokoro-js](https://www.npmjs.com/package/kokoro-js). No API key needed.
+- **ElevenLabs** — cloud-based TTS with premium voices. Requires an API key.
 
-Set the `ELEVENLABS_API_KEY` environment variable:
+### Kokoro (Default — Free & Local)
+
+Install the Kokoro package:
 
 ```bash
+npm install kokoro-js
+```
+
+```ts
+// Default provider — no API key needed!
+// First call downloads an ~86MB model (cached after that)
+const audio = await generateAudioLayer({
+  text: "Welcome to our product demo!",
+  voice: "af_sky",  // Optional (default: "af_heart")
+});
+
+await playAudio(page, audio, true);
+```
+
+Available options:
+
+- `voice` — Kokoro voice ID (default: `"af_heart"`)
+- `dtype` — Model precision: `"fp32"`, `"q8"`, `"q4"` (default: `"q8"`)
+- `modelId` — HuggingFace model ID (default: `"onnx-community/Kokoro-82M-v1.0-ONNX"`)
+
+### ElevenLabs
+
+Install the ElevenLabs package and set your API key:
+
+```bash
+npm install @elevenlabs/elevenlabs-js
 export ELEVENLABS_API_KEY="your-api-key-here"
 ```
 
-Or in your CI workflow:
+```ts
+const audio = await generateAudioLayer({
+  provider: "elevenlabs",
+  text: "Welcome to our product demo!",
+  voiceId: "21m00Tcm4TlvDq8ikWAM",
+  modelId: "eleven_multilingual_v2"  // Optional (this is the default)
+});
 
-```yaml
-env:
-  ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+await playAudio(page, audio, true);
 ```
 
 Get an API key at [elevenlabs.io](https://elevenlabs.io).
 
 ### `generateAudioLayer(options)`
 
-Generates an MP3 file from text using ElevenLabs text-to-speech.
+Generates an audio file from text using the configured TTS provider.
 
-```ts
-const audio = await generateAudioLayer({
-  text: "Welcome to our product demo!",
-  voiceId: "21m00Tcm4TlvDq8ikWAM",       // ElevenLabs voice ID
-  modelId: "eleven_multilingual_v2"        // Optional (this is the default)
-});
-```
-
-**Returns:** `AudioLayer` object with `{ filePath, text, voiceId }`.
+**Returns:** `AudioLayer` object with `{ filePath, text, voiceId? }`.
 
 ### `playAudio(page, audioLayer, waitForAudioToFinish?)`
 
 Injects the generated audio into the page and plays it.
 
 ```ts
-const audio = await generateAudioLayer({
-  text: "Click the button to get started.",
-  voiceId: "21m00Tcm4TlvDq8ikWAM"
-});
-
 // Play audio and continue immediately
 await playAudio(page, audio);
 
@@ -232,12 +252,24 @@ await playAudio(page, audio, true);
 
 ### Audio Cache
 
-Generated audio files are cached locally in an `__audio_cache/` directory (created in the current working directory). Cache keys are SHA-256 hashes of `text + voiceId + modelId`, so:
+Generated audio files are cached locally in an `__audio_cache/` directory (created in the current working directory). Cache keys are SHA-256 hashes of the provider configuration, so:
 
 - Identical requests are served instantly from disk
 - Changing the text, voice, or model generates a new file
 - The cache directory can be safely deleted to regenerate all audio
 - Add `__audio_cache/` to `.gitignore` if you don't want to commit cached audio files, or commit them to avoid regenerating in CI
+
+### Migrating from v0.2.x
+
+If you were using ElevenLabs (the previous default), add `provider: "elevenlabs"` to your `generateAudioLayer()` calls:
+
+```ts
+// Before (v0.2.x)
+const audio = await generateAudioLayer({ text: "Hello", voiceId: "..." });
+
+// After (v0.3.x)
+const audio = await generateAudioLayer({ provider: "elevenlabs", text: "Hello", voiceId: "..." });
+```
 
 ## Types
 
@@ -249,6 +281,7 @@ import type {
   MouseTarget,
   AudioLayer,
   GenerateAudioLayerOptions,
+  KokoroOptions,
   ShowBannerOptions,
   HighlightElementOptions,
   MoveMouseOptions,

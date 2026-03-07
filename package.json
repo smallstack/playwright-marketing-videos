@@ -24,8 +24,9 @@
 		"README.md",
 		"LICENSE"
 	],
-	"dependencies": {
-		"@elevenlabs/elevenlabs-js": "^2.33.0"
+	"optionalDependencies": {
+		"@elevenlabs/elevenlabs-js": "^2.33.0",
+		"kokoro-js": "^1.0.0"
 	},
 	"peerDependencies": {
 		"@playwright/test": ">=1.40.0"
@@ -50,6 +51,7 @@
 		"cursor",
 		"animation",
 		"elevenlabs",
+		"kokoro",
 		"text-to-speech",
 		"tts",
 		"demo",

@@ -1,7 +1,6 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 import {
 	test as base,
 	expect,
@@ -20,14 +19,23 @@ export type MouseTarget = MousePoint | Locator;
 export type AudioLayer = {
 	filePath: string;
 	text: string;
-	voiceId: string;
+	voiceId?: string;
 };
 
-export type GenerateAudioLayerOptions = {
-	text: string;
-	voiceId: string;
+export type KokoroOptions = {
+	voice?: string;
+	dtype?: "fp32" | "fp16" | "q8" | "q4" | "q4f16";
 	modelId?: string;
 };
+
+export type GenerateAudioLayerOptions =
+	| ({ provider?: "kokoro"; text: string } & KokoroOptions)
+	| {
+			provider: "elevenlabs";
+			text: string;
+			voiceId: string;
+			modelId?: string;
+	  };
 
 export type ShowBannerOptions = {
 	duration?: number;
@@ -815,31 +823,100 @@ export async function showBanner(
 // Voice-Over / Audio Layer
 // ============================================================================
 
+// biome-ignore lint/suspicious/noExplicitAny: cached KokoroTTS instance avoids importing the type
+let kokoroInstance: any = null;
+
 /**
- * Generates an audio file from text using ElevenLabs text-to-speech API.
- * Caches the result locally to avoid regenerating the same audio.
+ * Generates an audio file from text using text-to-speech.
  *
+ * Supports two providers:
+ * - `"kokoro"` (default) — free, local TTS via kokoro-js. No API key needed.
+ * - `"elevenlabs"` — cloud TTS via ElevenLabs API. Requires ELEVENLABS_API_KEY.
+ *
+ * Caches the result locally to avoid regenerating the same audio.
  * The cache directory (`__audio_cache/`) is created in the current working
- * directory. Files are named by a SHA-256 hash of the text + voiceId + modelId
+ * directory. Files are named by a SHA-256 hash of the configuration
  * so identical requests are served from disk.
  *
  * @param options - Text and voice configuration for generating audio
- * @returns AudioLayer with the file path to the generated/cached MP3
+ * @returns AudioLayer with the file path to the generated/cached audio
  */
 export async function generateAudioLayer(
 	options: GenerateAudioLayerOptions
 ): Promise<AudioLayer> {
-	const { text, voiceId, modelId = "eleven_multilingual_v2" } = options;
-
 	const cacheDir = path.join(process.cwd(), "__audio_cache");
-
 	if (!fs.existsSync(cacheDir)) {
 		fs.mkdirSync(cacheDir, { recursive: true });
 	}
 
+	if (options.provider === "elevenlabs") {
+		return generateElevenLabsAudio(options, cacheDir);
+	}
+
+	// Kokoro provider (default)
+	const kokoroOpts = options as {
+		provider?: "kokoro";
+		text: string;
+	} & KokoroOptions;
+	const voice = kokoroOpts.voice ?? "af_heart";
+	const dtype = kokoroOpts.dtype ?? "q8";
+	const modelId = kokoroOpts.modelId ?? "onnx-community/Kokoro-82M-v1.0-ONNX";
+
 	const hash = crypto
 		.createHash("sha256")
-		.update(text + voiceId + modelId)
+		.update(`kokoro:${kokoroOpts.text}:${voice}:${dtype}:${modelId}`)
+		.digest("hex")
+		.substring(0, 16);
+
+	const fileName = `${hash}.wav`;
+	const filePath = path.join(cacheDir, fileName);
+
+	if (fs.existsSync(filePath)) {
+		console.log(`Using cached audio: ${fileName}`);
+		return { filePath, text: kokoroOpts.text };
+	}
+
+	console.log(
+		`Generating audio with Kokoro for: "${kokoroOpts.text.substring(0, 50)}..."`
+	);
+
+	try {
+		const { KokoroTTS } = await import("kokoro-js");
+		if (!kokoroInstance) {
+			kokoroInstance = await KokoroTTS.from_pretrained(modelId, {
+				dtype,
+				device: "cpu"
+			});
+		}
+		const result = await kokoroInstance.generate(kokoroOpts.text, {
+			voice
+		});
+		result.save(filePath);
+
+		console.log(`Audio generated and cached: ${fileName}`);
+		return { filePath, text: kokoroOpts.text };
+	} catch (error) {
+		console.error("Error generating audio with Kokoro:", error);
+		throw new Error(
+			`Failed to generate audio with Kokoro. Make sure kokoro-js is installed (npm install kokoro-js): ${error instanceof Error ? error.message : String(error)}`
+		);
+	}
+}
+
+async function generateElevenLabsAudio(
+	options: {
+		provider: "elevenlabs";
+		text: string;
+		voiceId: string;
+		modelId?: string;
+	},
+	cacheDir: string
+): Promise<AudioLayer> {
+	const { text, voiceId, modelId = "eleven_multilingual_v2" } = options;
+
+	const hash = crypto
+		.createHash("sha256")
+		.update(`elevenlabs:${text}:${voiceId}:${modelId}`)
 		.digest("hex")
 		.substring(0, 16);
 
@@ -860,6 +937,7 @@ export async function generateAudioLayer(
 
 	console.log(`Generating audio for: "${text.substring(0, 50)}..."`);
 
+	const { ElevenLabsClient } = await import("@elevenlabs/elevenlabs-js");
 	const elevenlabs = new ElevenLabsClient({
 		apiKey
 	});
@@ -907,9 +985,11 @@ export async function playAudio(
 ): Promise<void> {
 	const audioBuffer = fs.readFileSync(audioLayer.filePath);
 	const audioBase64 = audioBuffer.toString("base64");
+	const ext = path.extname(audioLayer.filePath).slice(1);
+	const mimeType = ext === "wav" ? "audio/wav" : "audio/mpeg";
 
 	await page.evaluate(
-		({ audio }) => {
+		({ audio, mimeType }) => {
 			const oldAudio = document.getElementById("playwright-marketing-audio");
 			if (oldAudio) oldAudio.remove();
 
@@ -924,12 +1004,12 @@ export async function playAudio(
 				pointer-events: none;
 			`;
 
-			audioElement.src = `data:audio/mp3;base64,${audio}`;
+			audioElement.src = `data:${mimeType};base64,${audio}`;
 			audioElement.autoplay = false;
 
 			document.body.appendChild(audioElement);
 		},
-		{ audio: audioBase64 }
+		{ audio: audioBase64, mimeType }
 	);
 
 	const duration = await page.evaluate(() => {
