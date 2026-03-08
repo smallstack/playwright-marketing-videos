@@ -1,8 +1,16 @@
-# playwright-marketing-videos
+<p align="center">
+  <img src="https://ltmdiiguvlmrsihp.public.blob.vercel-storage.com/logos/playwright-marketing-videos.svg" alt="playwright-marketing-videos" width="120" />
+</p>
 
-Playwright tools for creating polished marketing videos with realistic mouse movements, typing animations, audio voice-overs, banners, and element highlights.
+<h1 align="center">playwright-marketing-videos</h1>
 
-Drop-in replacement for `@playwright/test` that automatically enhances every page interaction with smooth, human-like animations — perfect for product demos, feature showcases, and marketing screencasts.
+<p align="center">
+  Playwright tools for creating polished marketing videos with realistic mouse movements, typing animations, audio voice-overs, AI video overlays, banners, and element highlights.
+</p>
+
+<p align="center">
+  Drop-in replacement for <code>@playwright/test</code> that automatically enhances every page interaction with smooth, human-like animations — perfect for product demos, feature showcases, and marketing screencasts.
+</p>
 
 ## Installation
 
@@ -271,6 +279,380 @@ const audio = await generateAudioLayer({ text: "Hello", voiceId: "..." });
 const audio = await generateAudioLayer({ provider: "elevenlabs", text: "Hello", voiceId: "..." });
 ```
 
+## Video Overlays
+
+Generate AI video clips from text prompts — or use existing video files from any URL — and play them as full-screen overlays in your marketing videos. Videos are rendered directly in the browser viewport so Playwright's native video recording captures them — no external video editing required.
+
+### Runway (Default Provider)
+
+Set your API key:
+
+```bash
+export RUNWAYML_API_KEY="your-api-key-here"
+```
+
+```ts
+import { generateVideoOverlay, playVideoOverlay } from "playwright-marketing-videos";
+
+const video = await generateVideoOverlay({
+  prompt: "A smooth camera fly-through of a modern SaaS dashboard with charts animating in",
+  durationSec: 5,       // Video length in seconds (default: 5)
+  aspectRatio: "16:9"   // "16:9" (default) or "9:16" for vertical videos
+});
+
+await playVideoOverlay(page, video);
+```
+
+The default Runway provider uses the **Gen-4 Turbo** model. You can customize the model or API key by providing your own `RunwayVideoProvider` instance:
+
+```ts
+import { generateVideoOverlay, RunwayVideoProvider } from "playwright-marketing-videos";
+
+const video = await generateVideoOverlay({
+  prompt: "Colorful particles forming a company logo",
+  provider: new RunwayVideoProvider({
+    model: "gen4_turbo",
+    apiKey: "rk-my-specific-key"  // Override the environment variable
+  })
+});
+```
+
+Get an API key at [runwayml.com](https://runwayml.com).
+
+### URL (Pre-existing Videos)
+
+Use `UrlVideoProvider` to download and cache any hosted video file (from a CDN, S3, direct link, etc.) — no AI generation needed:
+
+```ts
+import { generateVideoOverlay, playVideoOverlay, UrlVideoProvider } from "playwright-marketing-videos";
+
+const video = await generateVideoOverlay({
+  prompt: "Company brand intro",  // Used only for logging/cache key
+  provider: new UrlVideoProvider("https://cdn.example.com/videos/brand-intro.mp4")
+});
+
+await playVideoOverlay(page, video);
+```
+
+The video is downloaded once and cached locally. Subsequent runs with the same URL serve the file from disk instantly.
+
+### `generateVideoOverlay(options)`
+
+Generates a short AI video clip from a text prompt.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `prompt` | `string` | *required* | Text prompt describing the video to generate |
+| `durationSec` | `number` | `5` | Video duration in seconds |
+| `aspectRatio` | `"16:9" \| "9:16"` | `"16:9"` | Aspect ratio — use `"9:16"` for vertical/mobile videos |
+| `provider` | `VideoProvider` | `RunwayVideoProvider` | Video generation provider instance |
+
+**Returns:** `VideoOverlay` object with `{ filePath, prompt, durationSec }`.
+
+### `playVideoOverlay(page, overlay, waitForVideoToFinish?)`
+
+Plays a video overlay as a full-screen layer on the Playwright page. The video is injected as a base64-encoded `<video>` element that covers the entire viewport.
+
+```ts
+// Play video and wait for it to finish (default)
+await playVideoOverlay(page, video);
+
+// Play video and continue immediately (e.g. to animate UI beneath)
+await playVideoOverlay(page, video, false);
+```
+
+### Custom Video Providers
+
+You can implement the `VideoProvider` interface to add support for other video generation APIs (e.g. Kling, Luma, Stability, Pika):
+
+```ts
+import type { VideoProvider } from "playwright-marketing-videos";
+
+class MyCustomProvider implements VideoProvider {
+  readonly name = "my-provider";
+
+  async generate(options: {
+    prompt: string;
+    durationSec: number;
+    aspectRatio: string;
+    cacheDir?: string;
+    cacheKey?: string;
+  }): Promise<Buffer> {
+    // Call your preferred video generation API here
+    // Return the video file as a Buffer
+    const response = await fetch("https://my-video-api.com/generate", {
+      method: "POST",
+      body: JSON.stringify({ prompt: options.prompt, duration: options.durationSec })
+    });
+    return Buffer.from(await response.arrayBuffer());
+  }
+}
+
+const video = await generateVideoOverlay({
+  prompt: "An abstract gradient animation",
+  provider: new MyCustomProvider()
+});
+```
+
+### Video Cache
+
+Generated videos are cached locally in a `__video_cache/` directory (created in the current working directory). Cache keys are SHA-256 hashes of the prompt + duration + aspect ratio + provider name, so:
+
+- Identical requests are served instantly from disk
+- Changing the prompt, duration, aspect ratio, or provider generates a new file
+- If a generation task times out, the provider can store intermediate state (e.g. pending task IDs) in the cache directory so the next run resumes polling instead of creating a new task
+- The cache directory can be safely deleted to regenerate all videos
+- Add `__video_cache/` to `.gitignore` if you don't want to commit cached video files, or commit them to avoid regenerating in CI
+
+## Examples
+
+### Full Product Demo with Voice-Over
+
+A complete example combining banners, voice-over narration, UI interactions, and highlights:
+
+```ts
+import {
+  test,
+  expect,
+  showBanner,
+  generateAudioLayer,
+  playAudio,
+  highlightElement,
+  moveMouse
+} from "playwright-marketing-videos";
+
+test("full product demo", async ({ page }) => {
+  // Opening banner with voice-over
+  const intro = await generateAudioLayer({
+    text: "Welcome to Acme — the fastest way to manage your projects.",
+  });
+
+  await showBanner(page, "Acme — Project Management", {
+    duration: 4000,
+    callback: async () => {
+      await page.goto("https://acme.example.com");
+    }
+  });
+
+  await playAudio(page, intro, true);
+
+  // Navigate and narrate
+  const narration = await generateAudioLayer({
+    text: "Let me show you how easy it is to create a new project.",
+  });
+  await playAudio(page, narration);
+
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByLabel("Project name").fill("My First Project");
+
+  // Highlight a key feature
+  await highlightElement(page, page.locator(".template-picker"), {
+    borderColor: "#4f46e5",
+    zoomScale: 1.08
+  });
+
+  const templates = await generateAudioLayer({
+    text: "Choose from dozens of pre-built templates to get started instantly.",
+  });
+  await playAudio(page, templates, true);
+
+  await page.getByRole("button", { name: "Create" }).click();
+});
+```
+
+### AI Video Intro with Voice-Over
+
+Use a generated AI video as a cinematic intro before your product walkthrough:
+
+```ts
+import {
+  test,
+  generateVideoOverlay,
+  playVideoOverlay,
+  generateAudioLayer,
+  playAudio,
+  showBanner
+} from "playwright-marketing-videos";
+
+test("video intro demo", async ({ page }) => {
+  await page.goto("https://your-app.com");
+
+  // Generate an AI video intro
+  const introVideo = await generateVideoOverlay({
+    prompt: "Cinematic zoom into a glowing laptop screen showing a beautiful dashboard, soft blue light, professional office background",
+    durationSec: 5,
+    aspectRatio: "16:9"
+  });
+
+  // Play video intro with narration
+  const narration = await generateAudioLayer({
+    text: "Introducing the next generation of project analytics."
+  });
+
+  await playVideoOverlay(page, introVideo);
+  await playAudio(page, narration, true);
+
+  // Continue with the product demo
+  await showBanner(page, "Real-Time Analytics Dashboard");
+  await page.getByRole("link", { name: "Dashboard" }).click();
+});
+```
+
+### Background Audio While Interacting
+
+Play voice-over narration in the background while performing animated interactions:
+
+```ts
+import {
+  test,
+  generateAudioLayer,
+  playAudio,
+  moveMouse
+} from "playwright-marketing-videos";
+
+test("background narration", async ({ page }) => {
+  await page.goto("https://your-app.com/settings");
+
+  // Start narration without waiting — it plays while we interact
+  const narration = await generateAudioLayer({
+    text: "The settings page gives you full control over notifications, privacy, and appearance.",
+  });
+  await playAudio(page, narration); // no `true` = don't wait
+
+  // These interactions happen while the audio plays
+  await page.getByRole("tab", { name: "Notifications" }).click();
+  await page.getByLabel("Email alerts").check();
+  await page.getByRole("tab", { name: "Appearance" }).click();
+  await page.getByLabel("Dark mode").check();
+});
+```
+
+### Multiple Video Overlays in Sequence
+
+Chain multiple AI-generated video clips to create a story arc:
+
+```ts
+import {
+  test,
+  generateVideoOverlay,
+  playVideoOverlay,
+  showBanner
+} from "playwright-marketing-videos";
+
+test("multi-scene video", async ({ page }) => {
+  await page.goto("https://your-app.com");
+
+  // Scene 1: Problem statement
+  const problemVideo = await generateVideoOverlay({
+    prompt: "Frustrated person drowning in spreadsheets and sticky notes, messy desk, overwhelmed expression",
+    durationSec: 5
+  });
+  await playVideoOverlay(page, problemVideo);
+
+  await showBanner(page, "There's a better way.");
+
+  // Scene 2: Solution reveal
+  const solutionVideo = await generateVideoOverlay({
+    prompt: "Clean modern workspace with a sleek app on screen, person smiling confidently, minimal design",
+    durationSec: 5
+  });
+  await playVideoOverlay(page, solutionVideo);
+
+  await showBanner(page, "Meet Acme.", { duration: 3000 });
+
+  // Continue with live product demo...
+  await page.getByRole("button", { name: "Get Started" }).click();
+});
+```
+
+### Pre-existing Video from URL
+
+Use a hosted video file as an overlay — great for brand intros, stock footage, or pre-rendered animations:
+
+```ts
+import {
+  test,
+  generateVideoOverlay,
+  playVideoOverlay,
+  generateAudioLayer,
+  playAudio,
+  showBanner,
+  UrlVideoProvider
+} from "playwright-marketing-videos";
+
+test("branded intro from URL", async ({ page }) => {
+  await page.goto("https://your-app.com");
+
+  // Use a pre-existing brand video as the intro
+  const brandIntro = await generateVideoOverlay({
+    prompt: "Brand intro video",
+    provider: new UrlVideoProvider("https://cdn.example.com/videos/brand-intro.mp4")
+  });
+
+  const narration = await generateAudioLayer({
+    text: "Built by developers, for developers."
+  });
+
+  await playVideoOverlay(page, brandIntro);
+  await playAudio(page, narration, true);
+
+  // Continue with the live product demo
+  await showBanner(page, "Let's dive in.");
+  await page.getByRole("button", { name: "Get Started" }).click();
+});
+```
+
+### Vertical Video for Mobile
+
+Create portrait-oriented videos for social media (TikTok, Reels, Shorts):
+
+```ts
+import { test, generateVideoOverlay, playVideoOverlay } from "playwright-marketing-videos";
+import { defineConfig, devices } from "@playwright/test";
+
+// In your playwright config, use a vertical viewport:
+// viewport: { width: 720, height: 1280 }
+
+test("mobile promo", async ({ page }) => {
+  await page.goto("https://your-app.com/mobile");
+
+  const video = await generateVideoOverlay({
+    prompt: "Vertical video of a hand swiping through a beautiful mobile app interface",
+    durationSec: 5,
+    aspectRatio: "9:16"  // Vertical aspect ratio
+  });
+
+  await playVideoOverlay(page, video);
+});
+```
+
+### ElevenLabs Premium Voice-Over
+
+Use ElevenLabs for higher-quality, multilingual narration:
+
+```ts
+import { test, generateAudioLayer, playAudio, showBanner } from "playwright-marketing-videos";
+
+test("premium voice demo", async ({ page }) => {
+  await page.goto("https://your-app.com");
+
+  // Generate with ElevenLabs premium voice
+  const intro = await generateAudioLayer({
+    provider: "elevenlabs",
+    text: "Welcome to the future of productivity. Let us show you what's possible.",
+    voiceId: "21m00Tcm4TlvDq8ikWAM",
+    modelId: "eleven_multilingual_v2"
+  });
+
+  await showBanner(page, "Productivity Reimagined", {
+    callback: async () => await page.goto("https://your-app.com/tour")
+  });
+
+  await playAudio(page, intro, true);
+  await page.getByRole("button", { name: "Start Tour" }).click();
+});
+```
+
 ## Types
 
 All types are exported for use in your own code:
@@ -280,12 +662,16 @@ import type {
   MousePoint,
   MouseTarget,
   AudioLayer,
+  VideoOverlay,
   GenerateAudioLayerOptions,
+  GenerateVideoOverlayOptions,
   KokoroOptions,
   ShowBannerOptions,
   HighlightElementOptions,
   MoveMouseOptions,
-  MoveMouseInNiceCurveOptions
+  MoveMouseInNiceCurveOptions,
+  VideoProvider,
+  UrlVideoProvider
 } from "playwright-marketing-videos";
 ```
 

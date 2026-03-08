@@ -1271,6 +1271,37 @@ export class RunwayVideoProvider implements VideoProvider {
 }
 
 // ============================================================================
+// Video Overlay — Provider: URL
+// ============================================================================
+
+/**
+ * Video provider that downloads a video file from a URL.
+ * Useful for using pre-existing video files hosted anywhere (CDN, S3, etc.)
+ * without AI generation. The downloaded file is cached locally.
+ */
+export class UrlVideoProvider implements VideoProvider {
+	readonly name = "url";
+	private readonly url: string;
+
+	constructor(url: string) {
+		this.url = url;
+	}
+
+	async generate(): Promise<Buffer> {
+		console.log(`[url] Downloading video from: ${this.url}`);
+
+		const response = await fetch(this.url);
+		if (!response.ok) {
+			throw new Error(
+				`Failed to download video from ${this.url}: ${response.status} ${response.statusText}`
+			);
+		}
+
+		return Buffer.from(await response.arrayBuffer());
+	}
+}
+
+// ============================================================================
 // Video Overlay — Generate & Play
 // ============================================================================
 
