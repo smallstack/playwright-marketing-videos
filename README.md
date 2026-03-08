@@ -281,7 +281,7 @@ const audio = await generateAudioLayer({ provider: "elevenlabs", text: "Hello", 
 
 ## Video Overlays
 
-Generate AI video clips from text prompts and play them as full-screen overlays in your marketing videos. Videos are rendered directly in the browser viewport so Playwright's native video recording captures them — no external video editing required.
+Generate AI video clips from text prompts — or use existing video files from any URL — and play them as full-screen overlays in your marketing videos. Videos are rendered directly in the browser viewport so Playwright's native video recording captures them — no external video editing required.
 
 ### Runway (Default Provider)
 
@@ -318,6 +318,23 @@ const video = await generateVideoOverlay({
 ```
 
 Get an API key at [runwayml.com](https://runwayml.com).
+
+### URL (Pre-existing Videos)
+
+Use `UrlVideoProvider` to download and cache any hosted video file (from a CDN, S3, direct link, etc.) — no AI generation needed:
+
+```ts
+import { generateVideoOverlay, playVideoOverlay, UrlVideoProvider } from "playwright-marketing-videos";
+
+const video = await generateVideoOverlay({
+  prompt: "Company brand intro",  // Used only for logging/cache key
+  provider: new UrlVideoProvider("https://cdn.example.com/videos/brand-intro.mp4")
+});
+
+await playVideoOverlay(page, video);
+```
+
+The video is downloaded once and cached locally. Subsequent runs with the same URL serve the file from disk instantly.
 
 ### `generateVideoOverlay(options)`
 
@@ -548,6 +565,43 @@ test("multi-scene video", async ({ page }) => {
 });
 ```
 
+### Pre-existing Video from URL
+
+Use a hosted video file as an overlay — great for brand intros, stock footage, or pre-rendered animations:
+
+```ts
+import {
+  test,
+  generateVideoOverlay,
+  playVideoOverlay,
+  generateAudioLayer,
+  playAudio,
+  showBanner,
+  UrlVideoProvider
+} from "playwright-marketing-videos";
+
+test("branded intro from URL", async ({ page }) => {
+  await page.goto("https://your-app.com");
+
+  // Use a pre-existing brand video as the intro
+  const brandIntro = await generateVideoOverlay({
+    prompt: "Brand intro video",
+    provider: new UrlVideoProvider("https://cdn.example.com/videos/brand-intro.mp4")
+  });
+
+  const narration = await generateAudioLayer({
+    text: "Built by developers, for developers."
+  });
+
+  await playVideoOverlay(page, brandIntro);
+  await playAudio(page, narration, true);
+
+  // Continue with the live product demo
+  await showBanner(page, "Let's dive in.");
+  await page.getByRole("button", { name: "Get Started" }).click();
+});
+```
+
 ### Vertical Video for Mobile
 
 Create portrait-oriented videos for social media (TikTok, Reels, Shorts):
@@ -616,7 +670,8 @@ import type {
   HighlightElementOptions,
   MoveMouseOptions,
   MoveMouseInNiceCurveOptions,
-  VideoProvider
+  VideoProvider,
+  UrlVideoProvider
 } from "playwright-marketing-videos";
 ```
 
