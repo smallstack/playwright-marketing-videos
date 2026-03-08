@@ -57,11 +57,13 @@ import {
   generateAudioLayer,
   playAudio,
   generateVideoOverlay,
-  playVideoOverlay
+  playVideoOverlay,
+  type AudioLayer,
+  type VideoOverlay
 } from "playwright-marketing-videos";
 
-let introAudio: Awaited<ReturnType<typeof generateAudioLayer>>;
-let introVideo: Awaited<ReturnType<typeof generateVideoOverlay>>;
+let introAudio: AudioLayer;
+let introVideo: VideoOverlay;
 
 test.beforeAll(async () => {
   // Pre-generate audio & video so the test itself runs without long pauses.
@@ -499,12 +501,13 @@ import {
   generateAudioLayer,
   playAudio,
   highlightElement,
-  moveMouse
+  moveMouse,
+  type AudioLayer
 } from "playwright-marketing-videos";
 
-let intro: Awaited<ReturnType<typeof generateAudioLayer>>;
-let narration: Awaited<ReturnType<typeof generateAudioLayer>>;
-let templates: Awaited<ReturnType<typeof generateAudioLayer>>;
+let intro: AudioLayer;
+let narration: AudioLayer;
+let templates: AudioLayer;
 
 test.beforeAll(async () => {
   intro = await generateAudioLayer({
@@ -557,11 +560,13 @@ import {
   playVideoOverlay,
   generateAudioLayer,
   playAudio,
-  showBanner
+  showBanner,
+  type AudioLayer,
+  type VideoOverlay
 } from "playwright-marketing-videos";
 
-let introVideo: Awaited<ReturnType<typeof generateVideoOverlay>>;
-let narration: Awaited<ReturnType<typeof generateAudioLayer>>;
+let introVideo: VideoOverlay;
+let narration: AudioLayer;
 
 test.beforeAll(async () => {
   introVideo = await generateVideoOverlay({
@@ -596,10 +601,11 @@ import {
   test,
   generateAudioLayer,
   playAudio,
-  moveMouse
+  moveMouse,
+  type AudioLayer
 } from "playwright-marketing-videos";
 
-let narration: Awaited<ReturnType<typeof generateAudioLayer>>;
+let narration: AudioLayer;
 
 test.beforeAll(async () => {
   narration = await generateAudioLayer({
@@ -630,11 +636,12 @@ import {
   test,
   generateVideoOverlay,
   playVideoOverlay,
-  showBanner
+  showBanner,
+  type VideoOverlay
 } from "playwright-marketing-videos";
 
-let problemVideo: Awaited<ReturnType<typeof generateVideoOverlay>>;
-let solutionVideo: Awaited<ReturnType<typeof generateVideoOverlay>>;
+let problemVideo: VideoOverlay;
+let solutionVideo: VideoOverlay;
 
 test.beforeAll(async () => {
   problemVideo = await generateVideoOverlay({
@@ -675,11 +682,13 @@ import {
   generateAudioLayer,
   playAudio,
   showBanner,
-  UrlVideoProvider
+  UrlVideoProvider,
+  type AudioLayer,
+  type VideoOverlay
 } from "playwright-marketing-videos";
 
-let brandIntro: Awaited<ReturnType<typeof generateVideoOverlay>>;
-let narration: Awaited<ReturnType<typeof generateAudioLayer>>;
+let brandIntro: VideoOverlay;
+let narration: AudioLayer;
 
 test.beforeAll(async () => {
   brandIntro = await generateVideoOverlay({
@@ -709,13 +718,13 @@ test("branded intro from URL", async ({ page }) => {
 Create portrait-oriented videos for social media (TikTok, Reels, Shorts):
 
 ```ts
-import { test, generateVideoOverlay, playVideoOverlay } from "playwright-marketing-videos";
+import { test, generateVideoOverlay, playVideoOverlay, type VideoOverlay } from "playwright-marketing-videos";
 import { defineConfig, devices } from "@playwright/test";
 
 // In your playwright config, use a vertical viewport:
 // viewport: { width: 720, height: 1280 }
 
-let video: Awaited<ReturnType<typeof generateVideoOverlay>>;
+let video: VideoOverlay;
 
 test.beforeAll(async () => {
   video = await generateVideoOverlay({
@@ -737,9 +746,9 @@ test("mobile promo", async ({ page }) => {
 Use ElevenLabs for higher-quality, multilingual narration:
 
 ```ts
-import { test, generateAudioLayer, playAudio, showBanner } from "playwright-marketing-videos";
+import { test, generateAudioLayer, playAudio, showBanner, type AudioLayer } from "playwright-marketing-videos";
 
-let intro: Awaited<ReturnType<typeof generateAudioLayer>>;
+let intro: AudioLayer;
 
 test.beforeAll(async () => {
   intro = await generateAudioLayer({
