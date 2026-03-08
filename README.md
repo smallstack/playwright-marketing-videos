@@ -12,6 +12,89 @@
   Drop-in replacement for <code>@playwright/test</code> that automatically enhances every page interaction with smooth, human-like animations — perfect for product demos, feature showcases, and marketing screencasts.
 </p>
 
+## Table of Contents
+
+- [Quick Example](#quick-example)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Playwright Config](#playwright-config)
+- [Examples](#examples)
+- [Audio / Voice-Over](#audio--voice-over)
+  - [Kokoro (Default)](#kokoro-default--free--local)
+  - [ElevenLabs](#elevenlabs)
+  - [generateAudioLayer](#generateaudiolayeroptions)
+  - [playAudio](#playaudiopage-audiolayer-waitforaudiotofinish)
+  - [Audio Cache](#audio-cache)
+  - [Migrating from v0.2.x](#migrating-from-v02x)
+- [Video Overlays](#video-overlays)
+  - [Runway (Default)](#runway-default-provider)
+  - [URL (Pre-existing Videos)](#url-pre-existing-videos)
+  - [generateVideoOverlay](#generatevideooverlayoptions)
+  - [playVideoOverlay](#playvideooverlaypage-overlay-waitforvideotofinish)
+  - [Custom Video Providers](#custom-video-providers)
+  - [Video Cache](#video-cache)
+- [API](#api)
+  - [test / expect](#test--expect)
+  - [showBanner](#showbannerpage-title-options)
+  - [highlightElement](#highlightelementpage-locator-options)
+  - [moveMouse](#movemousepage-options)
+  - [moveMouseInNiceCurve](#movemouseinnicecurvepage-start-end-options)
+  - [animatedType](#animatedtypepage-locator-text)
+  - [showClickAnimation](#showclickanimationpage-point)
+  - [Cursor Management](#cursor-management)
+  - [Scroll Animations](#scroll-animations)
+- [Types](#types)
+- [License](#license)
+
+## Quick Example
+
+A minimal example with voice-over narration and a video intro — note how `generateAudioLayer` and `generateVideoOverlay` are called in `beforeAll` so their results are ready before the test runs (the first call may take minutes to download models or generate media):
+
+```ts
+import {
+  test,
+  showBanner,
+  generateAudioLayer,
+  playAudio,
+  generateVideoOverlay,
+  playVideoOverlay,
+  type AudioLayer,
+  type VideoOverlay
+} from "playwright-marketing-videos";
+
+let introAudio: AudioLayer;
+let introVideo: VideoOverlay;
+
+test.beforeAll(async () => {
+  // Pre-generate audio & video so the test itself runs without long pauses.
+  // First run downloads an ~86 MB TTS model and generates media — subsequent
+  // runs are served from cache in milliseconds.
+  introAudio = await generateAudioLayer({
+    text: "Welcome to Acme — the fastest way to ship.",
+  });
+
+  introVideo = await generateVideoOverlay({
+    prompt: "Cinematic zoom into a glowing laptop showing a sleek dashboard",
+    durationSec: 5,
+  });
+});
+
+test("quick product intro", async ({ page }) => {
+  await page.goto("https://your-app.com");
+
+  // Play AI-generated video intro
+  await playVideoOverlay(page, introVideo);
+
+  // Show a banner with voice-over
+  await showBanner(page, "Acme — Ship Faster");
+  await playAudio(page, introAudio, true);
+
+  // Interactions are automatically animated (smooth cursor, typing, ripples)
+  await page.getByRole("button", { name: "Get Started" }).click();
+  await page.getByLabel("Email").fill("user@example.com");
+});
+```
+
 ## Installation
 
 ```bash
@@ -73,117 +156,288 @@ Run with:
 npx playwright test --config playwright.marketing.config.ts
 ```
 
-## API
+## Examples
 
-### `test` / `expect`
+### Full Product Demo with Voice-Over
 
-Extended Playwright test fixture. When you use `test` from this package, all page locator methods (`click`, `fill`, `locator`, `getByRole`, `getByText`, `getByTestId`, `getByLabel`, `getByPlaceholder`, `getByAltText`, `getByTitle`) are automatically wrapped with marketing animations:
-
-- **Clicks** move the cursor in a smooth curve to the target, show a ripple animation, then click.
-- **Fill/type** moves the cursor, shows a click animation, then types character-by-character with realistic timing (50-150ms per keystroke).
-- **Scrolling** is handled automatically with a scroll indicator animation when elements are off-screen.
-
-The cursor icon changes contextually: arrow (default), pointer (over buttons/links), text cursor (over inputs).
-
-### `showBanner(page, title, options?)`
-
-Displays a full-screen banner overlay with fade-in/out animations.
+A complete example combining banners, voice-over narration, UI interactions, and highlights. All audio is pre-generated in `beforeAll` so the test runs smoothly:
 
 ```ts
-await showBanner(page, "Feature Showcase", {
-  duration: 3000,        // Display duration in ms (default: 2000)
-  fadeInMs: 500,         // Fade-in duration (default: 300)
-  fadeOutMs: 500,        // Fade-out duration (default: 300)
-  backgroundColor: "#1e212b", // Background color (default: "#1e212b")
-  textColor: "#ffffff",  // Text color (default: "#ffffff")
-  fontSize: "48px",      // Font size (default: "48px")
-  callback: async () => {
-    // Optional: runs while the banner is shown (e.g. navigate to a page)
-    await page.goto("https://your-app.com");
-  }
+import {
+  test,
+  expect,
+  showBanner,
+  generateAudioLayer,
+  playAudio,
+  highlightElement,
+  moveMouse,
+  type AudioLayer
+} from "playwright-marketing-videos";
+
+let intro: AudioLayer;
+let narration: AudioLayer;
+let templates: AudioLayer;
+
+test.beforeAll(async () => {
+  intro = await generateAudioLayer({
+    text: "Welcome to Acme — the fastest way to manage your projects.",
+  });
+  narration = await generateAudioLayer({
+    text: "Let me show you how easy it is to create a new project.",
+  });
+  templates = await generateAudioLayer({
+    text: "Choose from dozens of pre-built templates to get started instantly.",
+  });
+});
+
+test("full product demo", async ({ page }) => {
+  await showBanner(page, "Acme — Project Management", {
+    duration: 4000,
+    callback: async () => {
+      await page.goto("https://acme.example.com");
+    }
+  });
+
+  await playAudio(page, intro, true);
+
+  // Navigate and narrate
+  await playAudio(page, narration);
+
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByLabel("Project name").fill("My First Project");
+
+  // Highlight a key feature
+  await highlightElement(page, page.locator(".template-picker"), {
+    borderColor: "#4f46e5",
+    zoomScale: 1.08
+  });
+
+  await playAudio(page, templates, true);
+
+  await page.getByRole("button", { name: "Create" }).click();
 });
 ```
 
-When a `callback` is provided, the banner is injected before the callback runs and persists across page navigations (re-injected on every `load` event). This is useful for showing a banner during a page transition.
+### AI Video Intro with Voice-Over
 
-### `highlightElement(page, locator, options?)`
-
-Highlights a page element with a zoom-in effect and colored border.
+Use a generated AI video as a cinematic intro before your product walkthrough:
 
 ```ts
-await highlightElement(page, page.locator(".feature-card"), {
-  duration: 2000,         // How long the highlight stays (default: 2000)
-  borderColor: "#ff6b35", // Highlight border color (default: "#ff6b35")
-  borderWidth: 4,         // Border width in px (default: 4)
-  zoomScale: 1.05         // Zoom factor (default: 1.05)
+import {
+  test,
+  generateVideoOverlay,
+  playVideoOverlay,
+  generateAudioLayer,
+  playAudio,
+  showBanner,
+  type AudioLayer,
+  type VideoOverlay
+} from "playwright-marketing-videos";
+
+let introVideo: VideoOverlay;
+let narration: AudioLayer;
+
+test.beforeAll(async () => {
+  introVideo = await generateVideoOverlay({
+    prompt: "Cinematic zoom into a glowing laptop screen showing a beautiful dashboard, soft blue light, professional office background",
+    durationSec: 5,
+    aspectRatio: "16:9"
+  });
+
+  narration = await generateAudioLayer({
+    text: "Introducing the next generation of project analytics."
+  });
+});
+
+test("video intro demo", async ({ page }) => {
+  await page.goto("https://your-app.com");
+
+  await playVideoOverlay(page, introVideo);
+  await playAudio(page, narration, true);
+
+  // Continue with the product demo
+  await showBanner(page, "Real-Time Analytics Dashboard");
+  await page.getByRole("link", { name: "Dashboard" }).click();
 });
 ```
 
-### `moveMouse(page, options)`
+### Background Audio While Interacting
 
-Moves the visible cursor in a smooth bezier curve to a target.
+Play voice-over narration in the background while performing animated interactions:
 
 ```ts
-// Move to a locator (auto-scrolls into view)
-await moveMouse(page, { to: page.getByText("Click me") });
+import {
+  test,
+  generateAudioLayer,
+  playAudio,
+  moveMouse,
+  type AudioLayer
+} from "playwright-marketing-videos";
 
-// Move to specific coordinates
-await moveMouse(page, { to: { x: 500, y: 300 } });
+let narration: AudioLayer;
 
-// Move from a specific starting point
-await moveMouse(page, {
-  from: { x: 100, y: 100 },
-  to: page.getByRole("button"),
-  durationMs: 1000
+test.beforeAll(async () => {
+  narration = await generateAudioLayer({
+    text: "The settings page gives you full control over notifications, privacy, and appearance.",
+  });
+});
+
+test("background narration", async ({ page }) => {
+  await page.goto("https://your-app.com/settings");
+
+  // Start narration without waiting — it plays while we interact
+  await playAudio(page, narration); // no `true` = don't wait
+
+  // These interactions happen while the audio plays
+  await page.getByRole("tab", { name: "Notifications" }).click();
+  await page.getByLabel("Email alerts").check();
+  await page.getByRole("tab", { name: "Appearance" }).click();
+  await page.getByLabel("Dark mode").check();
 });
 ```
 
-### `moveMouseInNiceCurve(page, start, end, options?)`
+### Multiple Video Overlays in Sequence
 
-Lower-level function for moving between two specific points with bezier curves.
+Chain multiple AI-generated video clips to create a story arc:
 
 ```ts
-await moveMouseInNiceCurve(page, { x: 0, y: 0 }, { x: 500, y: 400 }, {
-  durationMs: 800,  // Animation duration (auto-calculated from distance if omitted)
-  steps: 60,        // Number of interpolation steps (auto-calculated if omitted)
-  seed: 42          // Deterministic randomness seed for reproducible curves
+import {
+  test,
+  generateVideoOverlay,
+  playVideoOverlay,
+  showBanner,
+  type VideoOverlay
+} from "playwright-marketing-videos";
+
+let problemVideo: VideoOverlay;
+let solutionVideo: VideoOverlay;
+
+test.beforeAll(async () => {
+  problemVideo = await generateVideoOverlay({
+    prompt: "Frustrated person drowning in spreadsheets and sticky notes, messy desk, overwhelmed expression",
+    durationSec: 5
+  });
+  solutionVideo = await generateVideoOverlay({
+    prompt: "Clean modern workspace with a sleek app on screen, person smiling confidently, minimal design",
+    durationSec: 5
+  });
+});
+
+test("multi-scene video", async ({ page }) => {
+  await page.goto("https://your-app.com");
+
+  // Scene 1: Problem statement
+  await playVideoOverlay(page, problemVideo);
+  await showBanner(page, "There's a better way.");
+
+  // Scene 2: Solution reveal
+  await playVideoOverlay(page, solutionVideo);
+  await showBanner(page, "Meet Acme.", { duration: 3000 });
+
+  // Continue with live product demo...
+  await page.getByRole("button", { name: "Get Started" }).click();
 });
 ```
 
-### `animatedType(page, locator, text)`
+### Pre-existing Video from URL
 
-Types text character-by-character with realistic timing. Moves the cursor to the field, clicks to focus, then types with 50-150ms delays between keystrokes.
+Use a hosted video file as an overlay — great for brand intros, stock footage, or pre-rendered animations:
 
 ```ts
-await animatedType(page, page.getByLabel("Search"), "playwright marketing");
+import {
+  test,
+  generateVideoOverlay,
+  playVideoOverlay,
+  generateAudioLayer,
+  playAudio,
+  showBanner,
+  UrlVideoProvider,
+  type AudioLayer,
+  type VideoOverlay
+} from "playwright-marketing-videos";
+
+let brandIntro: VideoOverlay;
+let narration: AudioLayer;
+
+test.beforeAll(async () => {
+  brandIntro = await generateVideoOverlay({
+    prompt: "Brand intro video",
+    provider: new UrlVideoProvider("https://cdn.example.com/videos/brand-intro.mp4")
+  });
+
+  narration = await generateAudioLayer({
+    text: "Built by developers, for developers."
+  });
+});
+
+test("branded intro from URL", async ({ page }) => {
+  await page.goto("https://your-app.com");
+
+  await playVideoOverlay(page, brandIntro);
+  await playAudio(page, narration, true);
+
+  // Continue with the live product demo
+  await showBanner(page, "Let's dive in.");
+  await page.getByRole("button", { name: "Get Started" }).click();
+});
 ```
 
-### `showClickAnimation(page, point)`
+### Vertical Video for Mobile
 
-Shows a ripple effect at the given coordinates. Used internally by the `click` wrapper, but available for manual use.
+Create portrait-oriented videos for social media (TikTok, Reels, Shorts):
 
 ```ts
-await showClickAnimation(page, { x: 640, y: 360 });
+import { test, generateVideoOverlay, playVideoOverlay, type VideoOverlay } from "playwright-marketing-videos";
+import { defineConfig, devices } from "@playwright/test";
+
+// In your playwright config, use a vertical viewport:
+// viewport: { width: 720, height: 1280 }
+
+let video: VideoOverlay;
+
+test.beforeAll(async () => {
+  video = await generateVideoOverlay({
+    prompt: "Vertical video of a hand swiping through a beautiful mobile app interface",
+    durationSec: 5,
+    aspectRatio: "9:16"  // Vertical aspect ratio
+  });
+});
+
+test("mobile promo", async ({ page }) => {
+  await page.goto("https://your-app.com/mobile");
+
+  await playVideoOverlay(page, video);
+});
 ```
 
-### Cursor Management
+### ElevenLabs Premium Voice-Over
+
+Use ElevenLabs for higher-quality, multilingual narration:
 
 ```ts
-import { addVisibleCursor, hideCursor, showCursor, updateCursorPosition } from "playwright-marketing-videos";
+import { test, generateAudioLayer, playAudio, showBanner, type AudioLayer } from "playwright-marketing-videos";
 
-await addVisibleCursor(page);           // Inject the visible cursor (called automatically by test fixture)
-await hideCursor(page);                 // Temporarily hide the cursor
-await showCursor(page);                 // Show the cursor again
-await updateCursorPosition(page, 100, 200); // Manually set cursor position
-```
+let intro: AudioLayer;
 
-### Scroll Animations
+test.beforeAll(async () => {
+  intro = await generateAudioLayer({
+    provider: "elevenlabs",
+    text: "Welcome to the future of productivity. Let us show you what's possible.",
+    voiceId: "21m00Tcm4TlvDq8ikWAM",
+    modelId: "eleven_multilingual_v2"
+  });
+});
 
-```ts
-import { showScrollAnimation, hideScrollAnimation } from "playwright-marketing-videos";
+test("premium voice demo", async ({ page }) => {
+  await page.goto("https://your-app.com");
 
-await showScrollAnimation(page);  // Show a mouse-scroll indicator near the cursor
-await hideScrollAnimation(page);  // Remove the scroll indicator
+  await showBanner(page, "Productivity Reimagined", {
+    callback: async () => await page.goto("https://your-app.com/tour")
+  });
+
+  await playAudio(page, intro, true);
+  await page.getByRole("button", { name: "Start Tour" }).click();
+});
 ```
 
 ## Audio / Voice-Over
@@ -404,253 +658,117 @@ Generated videos are cached locally in a `__video_cache/` directory (created in 
 - The cache directory can be safely deleted to regenerate all videos
 - Add `__video_cache/` to `.gitignore` if you don't want to commit cached video files, or commit them to avoid regenerating in CI
 
-## Examples
+## API
 
-### Full Product Demo with Voice-Over
+### `test` / `expect`
 
-A complete example combining banners, voice-over narration, UI interactions, and highlights:
+Extended Playwright test fixture. When you use `test` from this package, all page locator methods (`click`, `fill`, `locator`, `getByRole`, `getByText`, `getByTestId`, `getByLabel`, `getByPlaceholder`, `getByAltText`, `getByTitle`) are automatically wrapped with marketing animations:
+
+- **Clicks** move the cursor in a smooth curve to the target, show a ripple animation, then click.
+- **Fill/type** moves the cursor, shows a click animation, then types character-by-character with realistic timing (50-150ms per keystroke).
+- **Scrolling** is handled automatically with a scroll indicator animation when elements are off-screen.
+
+The cursor icon changes contextually: arrow (default), pointer (over buttons/links), text cursor (over inputs).
+
+### `showBanner(page, title, options?)`
+
+Displays a full-screen banner overlay with fade-in/out animations.
 
 ```ts
-import {
-  test,
-  expect,
-  showBanner,
-  generateAudioLayer,
-  playAudio,
-  highlightElement,
-  moveMouse
-} from "playwright-marketing-videos";
-
-test("full product demo", async ({ page }) => {
-  // Opening banner with voice-over
-  const intro = await generateAudioLayer({
-    text: "Welcome to Acme — the fastest way to manage your projects.",
-  });
-
-  await showBanner(page, "Acme — Project Management", {
-    duration: 4000,
-    callback: async () => {
-      await page.goto("https://acme.example.com");
-    }
-  });
-
-  await playAudio(page, intro, true);
-
-  // Navigate and narrate
-  const narration = await generateAudioLayer({
-    text: "Let me show you how easy it is to create a new project.",
-  });
-  await playAudio(page, narration);
-
-  await page.getByRole("button", { name: "New Project" }).click();
-  await page.getByLabel("Project name").fill("My First Project");
-
-  // Highlight a key feature
-  await highlightElement(page, page.locator(".template-picker"), {
-    borderColor: "#4f46e5",
-    zoomScale: 1.08
-  });
-
-  const templates = await generateAudioLayer({
-    text: "Choose from dozens of pre-built templates to get started instantly.",
-  });
-  await playAudio(page, templates, true);
-
-  await page.getByRole("button", { name: "Create" }).click();
+await showBanner(page, "Feature Showcase", {
+  duration: 3000,        // Display duration in ms (default: 2000)
+  fadeInMs: 500,         // Fade-in duration (default: 300)
+  fadeOutMs: 500,        // Fade-out duration (default: 300)
+  backgroundColor: "#1e212b", // Background color (default: "#1e212b")
+  textColor: "#ffffff",  // Text color (default: "#ffffff")
+  fontSize: "48px",      // Font size (default: "48px")
+  callback: async () => {
+    // Optional: runs while the banner is shown (e.g. navigate to a page)
+    await page.goto("https://your-app.com");
+  }
 });
 ```
 
-### AI Video Intro with Voice-Over
+When a `callback` is provided, the banner is injected before the callback runs and persists across page navigations (re-injected on every `load` event). This is useful for showing a banner during a page transition.
 
-Use a generated AI video as a cinematic intro before your product walkthrough:
+### `highlightElement(page, locator, options?)`
+
+Highlights a page element with a zoom-in effect and colored border.
 
 ```ts
-import {
-  test,
-  generateVideoOverlay,
-  playVideoOverlay,
-  generateAudioLayer,
-  playAudio,
-  showBanner
-} from "playwright-marketing-videos";
-
-test("video intro demo", async ({ page }) => {
-  await page.goto("https://your-app.com");
-
-  // Generate an AI video intro
-  const introVideo = await generateVideoOverlay({
-    prompt: "Cinematic zoom into a glowing laptop screen showing a beautiful dashboard, soft blue light, professional office background",
-    durationSec: 5,
-    aspectRatio: "16:9"
-  });
-
-  // Play video intro with narration
-  const narration = await generateAudioLayer({
-    text: "Introducing the next generation of project analytics."
-  });
-
-  await playVideoOverlay(page, introVideo);
-  await playAudio(page, narration, true);
-
-  // Continue with the product demo
-  await showBanner(page, "Real-Time Analytics Dashboard");
-  await page.getByRole("link", { name: "Dashboard" }).click();
+await highlightElement(page, page.locator(".feature-card"), {
+  duration: 2000,         // How long the highlight stays (default: 2000)
+  borderColor: "#ff6b35", // Highlight border color (default: "#ff6b35")
+  borderWidth: 4,         // Border width in px (default: 4)
+  zoomScale: 1.05         // Zoom factor (default: 1.05)
 });
 ```
 
-### Background Audio While Interacting
+### `moveMouse(page, options)`
 
-Play voice-over narration in the background while performing animated interactions:
+Moves the visible cursor in a smooth bezier curve to a target.
 
 ```ts
-import {
-  test,
-  generateAudioLayer,
-  playAudio,
-  moveMouse
-} from "playwright-marketing-videos";
+// Move to a locator (auto-scrolls into view)
+await moveMouse(page, { to: page.getByText("Click me") });
 
-test("background narration", async ({ page }) => {
-  await page.goto("https://your-app.com/settings");
+// Move to specific coordinates
+await moveMouse(page, { to: { x: 500, y: 300 } });
 
-  // Start narration without waiting — it plays while we interact
-  const narration = await generateAudioLayer({
-    text: "The settings page gives you full control over notifications, privacy, and appearance.",
-  });
-  await playAudio(page, narration); // no `true` = don't wait
-
-  // These interactions happen while the audio plays
-  await page.getByRole("tab", { name: "Notifications" }).click();
-  await page.getByLabel("Email alerts").check();
-  await page.getByRole("tab", { name: "Appearance" }).click();
-  await page.getByLabel("Dark mode").check();
+// Move from a specific starting point
+await moveMouse(page, {
+  from: { x: 100, y: 100 },
+  to: page.getByRole("button"),
+  durationMs: 1000
 });
 ```
 
-### Multiple Video Overlays in Sequence
+### `moveMouseInNiceCurve(page, start, end, options?)`
 
-Chain multiple AI-generated video clips to create a story arc:
+Lower-level function for moving between two specific points with bezier curves.
 
 ```ts
-import {
-  test,
-  generateVideoOverlay,
-  playVideoOverlay,
-  showBanner
-} from "playwright-marketing-videos";
-
-test("multi-scene video", async ({ page }) => {
-  await page.goto("https://your-app.com");
-
-  // Scene 1: Problem statement
-  const problemVideo = await generateVideoOverlay({
-    prompt: "Frustrated person drowning in spreadsheets and sticky notes, messy desk, overwhelmed expression",
-    durationSec: 5
-  });
-  await playVideoOverlay(page, problemVideo);
-
-  await showBanner(page, "There's a better way.");
-
-  // Scene 2: Solution reveal
-  const solutionVideo = await generateVideoOverlay({
-    prompt: "Clean modern workspace with a sleek app on screen, person smiling confidently, minimal design",
-    durationSec: 5
-  });
-  await playVideoOverlay(page, solutionVideo);
-
-  await showBanner(page, "Meet Acme.", { duration: 3000 });
-
-  // Continue with live product demo...
-  await page.getByRole("button", { name: "Get Started" }).click();
+await moveMouseInNiceCurve(page, { x: 0, y: 0 }, { x: 500, y: 400 }, {
+  durationMs: 800,  // Animation duration (auto-calculated from distance if omitted)
+  steps: 60,        // Number of interpolation steps (auto-calculated if omitted)
+  seed: 42          // Deterministic randomness seed for reproducible curves
 });
 ```
 
-### Pre-existing Video from URL
+### `animatedType(page, locator, text)`
 
-Use a hosted video file as an overlay — great for brand intros, stock footage, or pre-rendered animations:
+Types text character-by-character with realistic timing. Moves the cursor to the field, clicks to focus, then types with 50-150ms delays between keystrokes.
 
 ```ts
-import {
-  test,
-  generateVideoOverlay,
-  playVideoOverlay,
-  generateAudioLayer,
-  playAudio,
-  showBanner,
-  UrlVideoProvider
-} from "playwright-marketing-videos";
-
-test("branded intro from URL", async ({ page }) => {
-  await page.goto("https://your-app.com");
-
-  // Use a pre-existing brand video as the intro
-  const brandIntro = await generateVideoOverlay({
-    prompt: "Brand intro video",
-    provider: new UrlVideoProvider("https://cdn.example.com/videos/brand-intro.mp4")
-  });
-
-  const narration = await generateAudioLayer({
-    text: "Built by developers, for developers."
-  });
-
-  await playVideoOverlay(page, brandIntro);
-  await playAudio(page, narration, true);
-
-  // Continue with the live product demo
-  await showBanner(page, "Let's dive in.");
-  await page.getByRole("button", { name: "Get Started" }).click();
-});
+await animatedType(page, page.getByLabel("Search"), "playwright marketing");
 ```
 
-### Vertical Video for Mobile
+### `showClickAnimation(page, point)`
 
-Create portrait-oriented videos for social media (TikTok, Reels, Shorts):
+Shows a ripple effect at the given coordinates. Used internally by the `click` wrapper, but available for manual use.
 
 ```ts
-import { test, generateVideoOverlay, playVideoOverlay } from "playwright-marketing-videos";
-import { defineConfig, devices } from "@playwright/test";
-
-// In your playwright config, use a vertical viewport:
-// viewport: { width: 720, height: 1280 }
-
-test("mobile promo", async ({ page }) => {
-  await page.goto("https://your-app.com/mobile");
-
-  const video = await generateVideoOverlay({
-    prompt: "Vertical video of a hand swiping through a beautiful mobile app interface",
-    durationSec: 5,
-    aspectRatio: "9:16"  // Vertical aspect ratio
-  });
-
-  await playVideoOverlay(page, video);
-});
+await showClickAnimation(page, { x: 640, y: 360 });
 ```
 
-### ElevenLabs Premium Voice-Over
-
-Use ElevenLabs for higher-quality, multilingual narration:
+### Cursor Management
 
 ```ts
-import { test, generateAudioLayer, playAudio, showBanner } from "playwright-marketing-videos";
+import { addVisibleCursor, hideCursor, showCursor, updateCursorPosition } from "playwright-marketing-videos";
 
-test("premium voice demo", async ({ page }) => {
-  await page.goto("https://your-app.com");
+await addVisibleCursor(page);           // Inject the visible cursor (called automatically by test fixture)
+await hideCursor(page);                 // Temporarily hide the cursor
+await showCursor(page);                 // Show the cursor again
+await updateCursorPosition(page, 100, 200); // Manually set cursor position
+```
 
-  // Generate with ElevenLabs premium voice
-  const intro = await generateAudioLayer({
-    provider: "elevenlabs",
-    text: "Welcome to the future of productivity. Let us show you what's possible.",
-    voiceId: "21m00Tcm4TlvDq8ikWAM",
-    modelId: "eleven_multilingual_v2"
-  });
+### Scroll Animations
 
-  await showBanner(page, "Productivity Reimagined", {
-    callback: async () => await page.goto("https://your-app.com/tour")
-  });
+```ts
+import { showScrollAnimation, hideScrollAnimation } from "playwright-marketing-videos";
 
-  await playAudio(page, intro, true);
-  await page.getByRole("button", { name: "Start Tour" }).click();
-});
+await showScrollAnimation(page);  // Show a mouse-scroll indicator near the cursor
+await hideScrollAnimation(page);  // Remove the scroll indicator
 ```
 
 ## Types
