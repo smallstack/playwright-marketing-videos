@@ -12,6 +12,87 @@
   Drop-in replacement for <code>@playwright/test</code> that automatically enhances every page interaction with smooth, human-like animations — perfect for product demos, feature showcases, and marketing screencasts.
 </p>
 
+## Table of Contents
+
+- [Quick Example](#quick-example)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Playwright Config](#playwright-config)
+- [API](#api)
+  - [test / expect](#test--expect)
+  - [showBanner](#showbannerpage-title-options)
+  - [highlightElement](#highlightelementpage-locator-options)
+  - [moveMouse](#movemousepage-options)
+  - [moveMouseInNiceCurve](#movemouseinnicecurvepage-start-end-options)
+  - [animatedType](#animatedtypepage-locator-text)
+  - [showClickAnimation](#showclickanimationpage-point)
+  - [Cursor Management](#cursor-management)
+  - [Scroll Animations](#scroll-animations)
+- [Audio / Voice-Over](#audio--voice-over)
+  - [Kokoro (Default)](#kokoro-default--free--local)
+  - [ElevenLabs](#elevenlabs)
+  - [generateAudioLayer](#generateaudiolayeroptions)
+  - [playAudio](#playaudiopage-audiolayer-waitforaudiotofinish)
+  - [Audio Cache](#audio-cache)
+  - [Migrating from v0.2.x](#migrating-from-v02x)
+- [Video Overlays](#video-overlays)
+  - [Runway (Default)](#runway-default-provider)
+  - [URL (Pre-existing Videos)](#url-pre-existing-videos)
+  - [generateVideoOverlay](#generatevideooverlayoptions)
+  - [playVideoOverlay](#playvideooverlaypage-overlay-waitforvideotofinish)
+  - [Custom Video Providers](#custom-video-providers)
+  - [Video Cache](#video-cache)
+- [Examples](#examples)
+- [Types](#types)
+- [License](#license)
+
+## Quick Example
+
+A minimal example with voice-over narration and a video intro — note how `generateAudioLayer` and `generateVideoOverlay` are called in `beforeAll` so their results are ready before the test runs (the first call may take minutes to download models or generate media):
+
+```ts
+import {
+  test,
+  showBanner,
+  generateAudioLayer,
+  playAudio,
+  generateVideoOverlay,
+  playVideoOverlay
+} from "playwright-marketing-videos";
+
+let introAudio: Awaited<ReturnType<typeof generateAudioLayer>>;
+let introVideo: Awaited<ReturnType<typeof generateVideoOverlay>>;
+
+test.beforeAll(async () => {
+  // Pre-generate audio & video so the test itself runs without long pauses.
+  // First run downloads an ~86 MB TTS model and generates media — subsequent
+  // runs are served from cache in milliseconds.
+  introAudio = await generateAudioLayer({
+    text: "Welcome to Acme — the fastest way to ship.",
+  });
+
+  introVideo = await generateVideoOverlay({
+    prompt: "Cinematic zoom into a glowing laptop showing a sleek dashboard",
+    durationSec: 5,
+  });
+});
+
+test("quick product intro", async ({ page }) => {
+  await page.goto("https://your-app.com");
+
+  // Play AI-generated video intro
+  await playVideoOverlay(page, introVideo);
+
+  // Show a banner with voice-over
+  await showBanner(page, "Acme — Ship Faster");
+  await playAudio(page, introAudio, true);
+
+  // Interactions are automatically animated (smooth cursor, typing, ripples)
+  await page.getByRole("button", { name: "Get Started" }).click();
+  await page.getByLabel("Email").fill("user@example.com");
+});
+```
+
 ## Installation
 
 ```bash
@@ -408,7 +489,7 @@ Generated videos are cached locally in a `__video_cache/` directory (created in 
 
 ### Full Product Demo with Voice-Over
 
-A complete example combining banners, voice-over narration, UI interactions, and highlights:
+A complete example combining banners, voice-over narration, UI interactions, and highlights. All audio is pre-generated in `beforeAll` so the test runs smoothly:
 
 ```ts
 import {
@@ -421,12 +502,23 @@ import {
   moveMouse
 } from "playwright-marketing-videos";
 
-test("full product demo", async ({ page }) => {
-  // Opening banner with voice-over
-  const intro = await generateAudioLayer({
+let intro: Awaited<ReturnType<typeof generateAudioLayer>>;
+let narration: Awaited<ReturnType<typeof generateAudioLayer>>;
+let templates: Awaited<ReturnType<typeof generateAudioLayer>>;
+
+test.beforeAll(async () => {
+  intro = await generateAudioLayer({
     text: "Welcome to Acme — the fastest way to manage your projects.",
   });
+  narration = await generateAudioLayer({
+    text: "Let me show you how easy it is to create a new project.",
+  });
+  templates = await generateAudioLayer({
+    text: "Choose from dozens of pre-built templates to get started instantly.",
+  });
+});
 
+test("full product demo", async ({ page }) => {
   await showBanner(page, "Acme — Project Management", {
     duration: 4000,
     callback: async () => {
@@ -437,9 +529,6 @@ test("full product demo", async ({ page }) => {
   await playAudio(page, intro, true);
 
   // Navigate and narrate
-  const narration = await generateAudioLayer({
-    text: "Let me show you how easy it is to create a new project.",
-  });
   await playAudio(page, narration);
 
   await page.getByRole("button", { name: "New Project" }).click();
@@ -451,9 +540,6 @@ test("full product demo", async ({ page }) => {
     zoomScale: 1.08
   });
 
-  const templates = await generateAudioLayer({
-    text: "Choose from dozens of pre-built templates to get started instantly.",
-  });
   await playAudio(page, templates, true);
 
   await page.getByRole("button", { name: "Create" }).click();
@@ -474,20 +560,23 @@ import {
   showBanner
 } from "playwright-marketing-videos";
 
-test("video intro demo", async ({ page }) => {
-  await page.goto("https://your-app.com");
+let introVideo: Awaited<ReturnType<typeof generateVideoOverlay>>;
+let narration: Awaited<ReturnType<typeof generateAudioLayer>>;
 
-  // Generate an AI video intro
-  const introVideo = await generateVideoOverlay({
+test.beforeAll(async () => {
+  introVideo = await generateVideoOverlay({
     prompt: "Cinematic zoom into a glowing laptop screen showing a beautiful dashboard, soft blue light, professional office background",
     durationSec: 5,
     aspectRatio: "16:9"
   });
 
-  // Play video intro with narration
-  const narration = await generateAudioLayer({
+  narration = await generateAudioLayer({
     text: "Introducing the next generation of project analytics."
   });
+});
+
+test("video intro demo", async ({ page }) => {
+  await page.goto("https://your-app.com");
 
   await playVideoOverlay(page, introVideo);
   await playAudio(page, narration, true);
@@ -510,13 +599,18 @@ import {
   moveMouse
 } from "playwright-marketing-videos";
 
+let narration: Awaited<ReturnType<typeof generateAudioLayer>>;
+
+test.beforeAll(async () => {
+  narration = await generateAudioLayer({
+    text: "The settings page gives you full control over notifications, privacy, and appearance.",
+  });
+});
+
 test("background narration", async ({ page }) => {
   await page.goto("https://your-app.com/settings");
 
   // Start narration without waiting — it plays while we interact
-  const narration = await generateAudioLayer({
-    text: "The settings page gives you full control over notifications, privacy, and appearance.",
-  });
   await playAudio(page, narration); // no `true` = don't wait
 
   // These interactions happen while the audio plays
@@ -539,25 +633,29 @@ import {
   showBanner
 } from "playwright-marketing-videos";
 
+let problemVideo: Awaited<ReturnType<typeof generateVideoOverlay>>;
+let solutionVideo: Awaited<ReturnType<typeof generateVideoOverlay>>;
+
+test.beforeAll(async () => {
+  problemVideo = await generateVideoOverlay({
+    prompt: "Frustrated person drowning in spreadsheets and sticky notes, messy desk, overwhelmed expression",
+    durationSec: 5
+  });
+  solutionVideo = await generateVideoOverlay({
+    prompt: "Clean modern workspace with a sleek app on screen, person smiling confidently, minimal design",
+    durationSec: 5
+  });
+});
+
 test("multi-scene video", async ({ page }) => {
   await page.goto("https://your-app.com");
 
   // Scene 1: Problem statement
-  const problemVideo = await generateVideoOverlay({
-    prompt: "Frustrated person drowning in spreadsheets and sticky notes, messy desk, overwhelmed expression",
-    durationSec: 5
-  });
   await playVideoOverlay(page, problemVideo);
-
   await showBanner(page, "There's a better way.");
 
   // Scene 2: Solution reveal
-  const solutionVideo = await generateVideoOverlay({
-    prompt: "Clean modern workspace with a sleek app on screen, person smiling confidently, minimal design",
-    durationSec: 5
-  });
   await playVideoOverlay(page, solutionVideo);
-
   await showBanner(page, "Meet Acme.", { duration: 3000 });
 
   // Continue with live product demo...
@@ -580,18 +678,22 @@ import {
   UrlVideoProvider
 } from "playwright-marketing-videos";
 
-test("branded intro from URL", async ({ page }) => {
-  await page.goto("https://your-app.com");
+let brandIntro: Awaited<ReturnType<typeof generateVideoOverlay>>;
+let narration: Awaited<ReturnType<typeof generateAudioLayer>>;
 
-  // Use a pre-existing brand video as the intro
-  const brandIntro = await generateVideoOverlay({
+test.beforeAll(async () => {
+  brandIntro = await generateVideoOverlay({
     prompt: "Brand intro video",
     provider: new UrlVideoProvider("https://cdn.example.com/videos/brand-intro.mp4")
   });
 
-  const narration = await generateAudioLayer({
+  narration = await generateAudioLayer({
     text: "Built by developers, for developers."
   });
+});
+
+test("branded intro from URL", async ({ page }) => {
+  await page.goto("https://your-app.com");
 
   await playVideoOverlay(page, brandIntro);
   await playAudio(page, narration, true);
@@ -613,14 +715,18 @@ import { defineConfig, devices } from "@playwright/test";
 // In your playwright config, use a vertical viewport:
 // viewport: { width: 720, height: 1280 }
 
-test("mobile promo", async ({ page }) => {
-  await page.goto("https://your-app.com/mobile");
+let video: Awaited<ReturnType<typeof generateVideoOverlay>>;
 
-  const video = await generateVideoOverlay({
+test.beforeAll(async () => {
+  video = await generateVideoOverlay({
     prompt: "Vertical video of a hand swiping through a beautiful mobile app interface",
     durationSec: 5,
     aspectRatio: "9:16"  // Vertical aspect ratio
   });
+});
+
+test("mobile promo", async ({ page }) => {
+  await page.goto("https://your-app.com/mobile");
 
   await playVideoOverlay(page, video);
 });
@@ -633,16 +739,19 @@ Use ElevenLabs for higher-quality, multilingual narration:
 ```ts
 import { test, generateAudioLayer, playAudio, showBanner } from "playwright-marketing-videos";
 
-test("premium voice demo", async ({ page }) => {
-  await page.goto("https://your-app.com");
+let intro: Awaited<ReturnType<typeof generateAudioLayer>>;
 
-  // Generate with ElevenLabs premium voice
-  const intro = await generateAudioLayer({
+test.beforeAll(async () => {
+  intro = await generateAudioLayer({
     provider: "elevenlabs",
     text: "Welcome to the future of productivity. Let us show you what's possible.",
     voiceId: "21m00Tcm4TlvDq8ikWAM",
     modelId: "eleven_multilingual_v2"
   });
+});
+
+test("premium voice demo", async ({ page }) => {
+  await page.goto("https://your-app.com");
 
   await showBanner(page, "Productivity Reimagined", {
     callback: async () => await page.goto("https://your-app.com/tour")
