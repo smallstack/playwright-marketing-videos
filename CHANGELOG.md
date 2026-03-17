@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/smallstack/playwright-marketing-videos/compare/playwright-marketing-videos-v0.4.0...playwright-marketing-videos-v0.5.0) (2026-03-17)
+
+
+### Added
+
+* add audio fixes and new scroll functions ([56c6ff0](https://github.com/smallstack/playwright-marketing-videos/commit/56c6ff034515549e63d3ad9afd5d6c55536706b6))
+
 ## [0.4.0](https://github.com/smallstack/playwright-marketing-videos/compare/playwright-marketing-videos-v0.3.0...playwright-marketing-videos-v0.4.0) (2026-03-08)
 
 
