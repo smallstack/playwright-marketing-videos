@@ -41,9 +41,13 @@ export type ShowBannerOptions = {
 	duration?: number;
 	fadeInMs?: number;
 	fadeOutMs?: number;
+	fadeOut?: boolean;
 	backgroundColor?: string;
 	textColor?: string;
 	fontSize?: string;
+	text: string;
+	logoUrl?: string;
+	logoText?: string;
 	callback?: () => Promise<void>;
 };
 
@@ -168,8 +172,20 @@ export async function addVisibleCursor(page: Page): Promise<void> {
 
 			const elementUnder = document.elementFromPoint(x, y);
 
+			const inputType =
+				elementUnder instanceof HTMLInputElement
+					? elementUnder.type.toLowerCase()
+					: "";
+			const isNonTextInput =
+				inputType === "checkbox" ||
+				inputType === "radio" ||
+				inputType === "submit" ||
+				inputType === "button" ||
+				inputType === "reset";
+
 			const isTextInput =
 				elementUnder &&
+				!isNonTextInput &&
 				(elementUnder.tagName === "INPUT" ||
 					elementUnder.tagName === "TEXTAREA" ||
 					elementUnder.getAttribute("contenteditable") === "true" ||
@@ -178,8 +194,10 @@ export async function addVisibleCursor(page: Page): Promise<void> {
 			const isClickable =
 				elementUnder &&
 				!isTextInput &&
-				(elementUnder.tagName === "BUTTON" ||
+				(isNonTextInput ||
+					elementUnder.tagName === "BUTTON" ||
 					elementUnder.tagName === "A" ||
+					elementUnder.tagName === "SELECT" ||
 					elementUnder.getAttribute("role") === "button" ||
 					elementUnder.closest('button, a, [role="button"], [onclick]') !==
 						null ||
@@ -268,23 +286,15 @@ export async function updateCursorPosition(
 // ============================================================================
 
 export async function showScrollAnimation(page: Page): Promise<void> {
-	const pos = cursorState.lastPosition;
-
-	await page.evaluate((position) => {
+	await page.evaluate(() => {
 		const scrollIndicator = document.createElement("div");
 		scrollIndicator.id = "scroll-indicator";
 
-		const left = position ? `${position.x + 40}px` : "auto";
-		const right = position ? "auto" : "30px";
-		const top = position ? `${position.y}px` : "50%";
-		const transform = position ? "translateY(-50%)" : "translateY(-50%)";
-
 		scrollIndicator.style.cssText = `
 			position: fixed;
-			left: ${left};
-			right: ${right};
-			top: ${top};
-			transform: ${transform};
+			left: 50%;
+			top: 50%;
+			transform: translate(-50%, -50%);
 			width: 80px;
 			height: 100px;
 			pointer-events: none;
@@ -304,7 +314,7 @@ export async function showScrollAnimation(page: Page): Promise<void> {
 
 		document.body.appendChild(scrollIndicator);
 		void scrollIndicator.offsetHeight;
-	}, pos);
+	});
 }
 
 export async function hideScrollAnimation(page: Page): Promise<void> {
@@ -384,7 +394,7 @@ function isLocator(target: MouseTarget): target is Locator {
 	return typeof (target as Locator).boundingBox === "function";
 }
 
-async function smoothScrollToElement(
+export async function smoothScrollToElement(
 	page: Page,
 	locator: Locator
 ): Promise<void> {
@@ -604,10 +614,20 @@ export async function animatedType(
 	await showClickAnimation(page, point);
 	await hideCursor(page);
 
+	const specialChars = new Set("!@#$%^&*(){}[]<>:;\"'`,./\\|?~-_=+\n\t");
 	for (let i = 0; i < text.length; i++) {
-		await locator.pressSequentially(text[i], {
-			delay: 50 + Math.random() * 100
+		const char = text[i];
+		// Pause before special characters, like humans hesitating before punctuation
+		if (specialChars.has(char)) {
+			await page.waitForTimeout(80 + Math.random() * 200);
+		}
+		await locator.pressSequentially(char, {
+			delay: 20 + Math.random() * 60
 		});
+		// Occasional micro-pause mid-word to feel more human
+		if (Math.random() < 0.1) {
+			await page.waitForTimeout(40 + Math.random() * 120);
+		}
 	}
 
 	await showCursor(page);
@@ -713,143 +733,153 @@ function createBannerScript(params: {
 	fontSize: string;
 	initialOpacity: string;
 	fadeInMs?: number;
+	logoUrl?: string;
+	logoText?: string;
 }): string {
+	const transition = params.fadeInMs
+		? `transition: opacity ${params.fadeInMs}ms ease-out !important;`
+		: "";
+
+	let logoScript = "";
+	if (params.logoUrl || params.logoText) {
+		logoScript += `
+		var logoContainer = document.createElement("div");
+		logoContainer.style.cssText = "display: flex !important; align-items: center !important; justify-content: center !important; gap: 12px !important; margin: 0 0 24px 0 !important; padding: 0 !important; flex-shrink: 0 !important;";
+		`;
+
+		if (params.logoUrl) {
+			logoScript += `
+		var logoImg = document.createElement("img");
+		logoImg.src = "${params.logoUrl}";
+		logoImg.style.cssText = "height: 64px !important; width: auto !important; object-fit: contain !important; margin: 0 !important; padding: 0 !important; flex-shrink: 0 !important;";
+		logoContainer.appendChild(logoImg);
+			`;
+		}
+
+		if (params.logoText) {
+			logoScript += `
+		var logoTextEl = document.createElement("div");
+		logoTextEl.style.cssText = "font-size: 64px !important; font-weight: 700 !important; text-align: center !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important; letter-spacing: -0.3px !important; margin: 0 !important; padding: 0 !important; line-height: 1 !important; flex-shrink: 0 !important; opacity: 0.85 !important;";
+		logoTextEl.textContent = "${params.logoText}";
+		logoContainer.appendChild(logoTextEl);
+			`;
+		}
+
+		logoScript += `
+		banner.appendChild(logoContainer);
+		`;
+	}
+
+	const fadeInScript = params.fadeInMs
+		? `
+		setTimeout(function() {
+			banner.style.opacity = "1";
+		}, 50);
+		`
+		: "";
+
 	return `
-		// Remove old banner if it exists
-		const oldBanner = document.getElementById("playwright-marketing-banner");
+		var oldBanner = document.getElementById("playwright-marketing-banner");
 		if (oldBanner) oldBanner.remove();
 
-		const banner = document.createElement("div");
+		var banner = document.createElement("div");
 		banner.id = "playwright-marketing-banner";
-		banner.style.cssText = \`
-			position: fixed !important;
-			top: 0 !important;
-			left: 0 !important;
-			right: 0 !important;
-			bottom: 0 !important;
-			width: 100vw !important;
-			height: 100vh !important;
-			margin: 0 !important;
-			padding: 0 !important;
-			background: ${params.backgroundColor} !important;
-			color: ${params.textColor} !important;
-			z-index: 2147483647 !important;
-			opacity: ${params.initialOpacity} !important;
-			${params.fadeInMs ? `transition: opacity ${params.fadeInMs}ms ease-out !important;` : ""}
-			display: flex !important;
-			flex-direction: column !important;
-			align-items: center !important;
-			justify-content: center !important;
-			gap: 0 !important;
-			box-sizing: border-box !important;
-			border: none !important;
-			outline: none !important;
-			pointer-events: none !important;
-		\`;
+		banner.style.cssText = "position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important; width: 100vw !important; height: 100vh !important; margin: 0 !important; padding: 0 !important; background: ${params.backgroundColor} !important; color: ${params.textColor} !important; z-index: 2147483647 !important; opacity: ${params.initialOpacity} !important; ${transition} display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important; gap: 0 !important; box-sizing: border-box !important; border: none !important; outline: none !important; pointer-events: none !important;";
 
-		// Add title
-		const titleElement = document.createElement("div");
-		titleElement.style.cssText = \`
-			font-size: ${params.fontSize} !important;
-			font-weight: 600 !important;
-			text-align: center !important;
-			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
-			text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2) !important;
-			letter-spacing: -0.5px !important;
-			margin: 0 !important;
-			padding: 0 !important;
-			line-height: 1.2 !important;
-			flex-shrink: 0 !important;
-		\`;
+		${logoScript}
+
+		var titleElement = document.createElement("div");
+		titleElement.style.cssText = "font-size: ${params.fontSize} !important; font-weight: 600 !important; text-align: center !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2) !important; letter-spacing: -0.5px !important; margin: 0 !important; padding: 0 !important; line-height: 1.2 !important; flex-shrink: 0 !important;";
 		titleElement.textContent = "${params.title}";
 		banner.appendChild(titleElement);
 
 		document.body.appendChild(banner);
 
-		${
-			params.fadeInMs
-				? `
-		// Trigger fade-in
-		setTimeout(() => {
-			banner.style.opacity = "1";
-		}, 50);
-		`
-				: ""
-		}
+		${fadeInScript}
 	`;
 }
 
 export async function showBanner(
 	page: Page,
-	title: string,
-	options?: ShowBannerOptions
+	options: ShowBannerOptions
 ): Promise<void> {
-	const duration = options?.duration ?? 2000;
+	const duration = options?.duration;
 	const fadeInMs = options?.fadeInMs ?? 300;
 	const fadeOutMs = options?.fadeOutMs ?? 300;
 	const backgroundColor = options?.backgroundColor ?? "#1e212b";
 	const textColor = options?.textColor ?? "#ffffff";
-	const fontSize = options?.fontSize ?? "48px";
+	const fontSize = options?.fontSize ?? "32px";
 
 	if (options?.callback) {
 		const bannerParams = {
-			title,
+			title: options.text,
 			backgroundColor,
 			textColor,
 			fontSize,
-			initialOpacity: "1"
+			initialOpacity: "1",
+			logoUrl: options.logoUrl,
+			logoText: options.logoText
 		};
 
 		await page.evaluate(createBannerScript(bannerParams));
 
-		const loadListener = async () => {
-			await page.evaluate(createBannerScript(bannerParams));
-		};
-		page.on("load", loadListener);
+		// Save banner HTML to window.name so the addInitScript
+		// can re-inject it instantly on any navigation during the callback
+		await page.evaluate(() => {
+			const banner = document.getElementById("playwright-marketing-banner");
+			if (banner) {
+				window.name = "__pmv:" + banner.outerHTML;
+			}
+		});
 
 		await options.callback();
-
-		page.off("load", loadListener);
 
 		await page.waitForLoadState("domcontentloaded");
 		await page.waitForLoadState("networkidle");
 
-		await page.waitForTimeout(duration);
+		// Clear persistence flag — banner is already in the current DOM
+		await page.evaluate(() => {
+			window.name = "";
+		});
 	} else {
 		await page.evaluate(
 			createBannerScript({
-				title,
+				title: options.text,
 				backgroundColor,
 				textColor,
 				fontSize,
 				initialOpacity: "0",
-				fadeInMs
+				fadeInMs,
+				logoUrl: options.logoUrl,
+				logoText: options.logoText
 			})
 		);
 
 		await page.waitForTimeout(fadeInMs);
-		await page.waitForTimeout(duration);
 	}
+	if (duration !== undefined) await page.waitForTimeout(duration);
 
-	await page.evaluate(
-		({ fadeOutMs }) => {
+	if (options?.fadeOut !== false) {
+		await page.evaluate(
+			({ fadeOutMs }) => {
+				const banner = document.getElementById("playwright-marketing-banner");
+				if (banner) {
+					banner.style.transition = `opacity ${fadeOutMs}ms ease-in`;
+					banner.style.opacity = "0";
+				}
+			},
+			{ fadeOutMs }
+		);
+
+		await page.waitForTimeout(fadeOutMs);
+
+		await page.evaluate(() => {
 			const banner = document.getElementById("playwright-marketing-banner");
 			if (banner) {
-				banner.style.transition = `opacity ${fadeOutMs}ms ease-in`;
-				banner.style.opacity = "0";
+				banner.remove();
 			}
-		},
-		{ fadeOutMs }
-	);
-
-	await page.waitForTimeout(fadeOutMs);
-
-	await page.evaluate(() => {
-		const banner = document.getElementById("playwright-marketing-banner");
-		if (banner) {
-			banner.remove();
-		}
-	});
+		});
+	}
 }
 
 // ============================================================================
@@ -1007,6 +1037,11 @@ async function generateElevenLabsAudio(
 /**
  * Injects and plays an audio file in the Playwright page.
  *
+ * When `waitForAudioToFinish` is false (the default), the function returns
+ * immediately so interactions can run on top of the audio. However, the next
+ * call to `playAudio` will automatically wait for any previously playing
+ * audio to finish before starting the new clip.
+ *
  * @param page - Playwright page instance
  * @param audioLayer - AudioLayer object containing the file path to the audio
  * @param waitForAudioToFinish - Whether to wait for the audio to finish playing before returning
@@ -1016,6 +1051,21 @@ export async function playAudio(
 	audioLayer: AudioLayer,
 	waitForAudioToFinish: boolean = false
 ): Promise<void> {
+	// Auto-wait: if a previous audio is still playing, wait for it to finish
+	try {
+		await page.evaluate(() => {
+			const existing = document.getElementById(
+				"playwright-marketing-audio"
+			) as HTMLAudioElement | null;
+			if (!existing || existing.ended) return Promise.resolve();
+			return new Promise<void>((resolve) => {
+				existing.addEventListener("ended", () => resolve(), { once: true });
+			});
+		});
+	} catch {
+		// Navigation may have destroyed the page context — safe to proceed
+	}
+
 	const audioBuffer = fs.readFileSync(audioLayer.filePath);
 	const audioBase64 = audioBuffer.toString("base64");
 	const ext = path.extname(audioLayer.filePath).slice(1);
@@ -1083,6 +1133,78 @@ export async function playAudio(
 			}
 		});
 	}
+}
+
+// ============================================================================
+// Audio + Slow Scroll
+// ============================================================================
+
+export type PlayAudioWithScrollOptions = {
+	/** Locator of the scrollable container. Defaults to the window. */
+	scrollContainer?: Locator;
+	/** Total pixels to scroll down. Defaults to what the speed allows within the audio duration. */
+	scrollDistance?: number;
+	/** Speed in pixels per second. Defaults to 50. */
+	scrollSpeed?: number;
+};
+
+/**
+ * Plays audio while slowly scrolling downward for the duration of the audio.
+ */
+export async function playAudioWithScroll(
+	page: Page,
+	audioLayer: AudioLayer,
+	options?: PlayAudioWithScrollOptions
+): Promise<void> {
+	const scrollSpeed = options?.scrollSpeed ?? 50;
+	const container = options?.scrollContainer;
+
+	await showScrollAnimation(page);
+
+	// Start audio (non-blocking)
+	await playAudio(page, audioLayer, false);
+
+	// Get audio duration from the element we just injected
+	const duration = await page.evaluate(() => {
+		const el = document.getElementById(
+			"playwright-marketing-audio"
+		) as HTMLAudioElement | null;
+		if (!el) return 0;
+		if (el.duration && !Number.isNaN(el.duration)) return el.duration * 1000;
+		return new Promise<number>((resolve) => {
+			el.addEventListener("loadedmetadata", () => {
+				resolve(el.duration * 1000);
+			});
+		});
+	});
+
+	if (!duration || duration <= 0) {
+		await hideScrollAnimation(page);
+		return;
+	}
+
+	const maxDistance = container
+		? await container.evaluate((el) => el.scrollHeight - el.clientHeight)
+		: await page.evaluate(
+				() => document.documentElement.scrollHeight - window.innerHeight
+			);
+
+	const distanceBySpeed = (scrollSpeed * duration) / 1000;
+	const distance = options?.scrollDistance
+		? Math.min(options.scrollDistance, maxDistance)
+		: Math.min(distanceBySpeed, maxDistance);
+
+	// Scroll using mouse wheel events — works regardless of which element is scrollable
+	const stepInterval = 50;
+	const steps = Math.ceil(duration / stepInterval);
+	const pixelsPerStep = distance / steps;
+
+	for (let i = 0; i < steps; i++) {
+		await page.mouse.wheel(0, pixelsPerStep);
+		await page.waitForTimeout(stepInterval);
+	}
+
+	await hideScrollAnimation(page);
 }
 
 // ============================================================================
@@ -1492,6 +1614,17 @@ function wrapLocatorWithMarketingActions(
 		await animatedType(page, locator, value);
 	};
 
+	const originalSelectOption = locator.selectOption.bind(locator);
+	locator.selectOption = async (
+		...args: Parameters<Locator["selectOption"]>
+	) => {
+		await addVisibleCursor(page);
+		await moveMouse(page, { to: locator });
+		const point = await getLocatorCenter(locator);
+		await showClickAnimation(page, point);
+		return originalSelectOption(...args);
+	};
+
 	return locator;
 }
 
@@ -1501,9 +1634,35 @@ function wrapLocatorWithMarketingActions(
  *
  * Use this instead of `@playwright/test`'s `test` to get animated
  * cursor, click ripples, and typing effects out of the box.
+ *
+ * Banners persist across navigations via addInitScript + sessionStorage.
+ * Audio should be composed in post-production (see composeVideo).
  */
 export const test = base.extend<{ page: Page }>({
 	page: async ({ page }, use) => {
+		// Re-inject banner on every navigation from window.name
+		await page.addInitScript(() => {
+			try {
+				if (window.name && window.name.startsWith("__pmv:")) {
+					const bannerHtml = window.name.substring(6);
+					const inject = () => {
+						if (!document.getElementById("playwright-marketing-banner")) {
+							document.body.insertAdjacentHTML("beforeend", bannerHtml);
+						}
+					};
+					if (document.body) {
+						inject();
+					} else {
+						document.addEventListener("DOMContentLoaded", inject, {
+							once: true
+						});
+					}
+				}
+			} catch (_) {
+				// ignore
+			}
+		});
+
 		await addVisibleCursor(page);
 
 		const originalLocator = page.locator.bind(page);
