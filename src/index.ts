@@ -124,7 +124,8 @@ export async function addVisibleCursor(page: Page): Promise<void> {
 
 	if (cursorExists) return;
 
-	await page.evaluate(() => {
+	const pos = cursorState.lastPosition;
+	await page.evaluate((initialPos) => {
 		const cursor = document.createElement("div");
 		cursor.id = "playwright-cursor";
 		cursor.style.cssText = `
@@ -133,8 +134,8 @@ export async function addVisibleCursor(page: Page): Promise<void> {
 			height: 32px;
 			transform: translate(-1px, -1px);
 			pointer-events: none;
-			left: 0;
-			top: 0;
+			left: ${initialPos.x}px;
+			top: ${initialPos.y}px;
 			transition: transform 0.15s ease-out;
 		`;
 
@@ -247,7 +248,7 @@ export async function addVisibleCursor(page: Page): Promise<void> {
 			attributes: true,
 			attributeFilter: ["open"]
 		});
-	});
+	}, pos);
 }
 
 export async function hideCursor(page: Page): Promise<void> {
@@ -258,10 +259,15 @@ export async function hideCursor(page: Page): Promise<void> {
 }
 
 export async function showCursor(page: Page): Promise<void> {
-	await page.evaluate(() => {
+	const pos = cursorState.lastPosition;
+	await page.evaluate(({ x, y }) => {
 		const cursor = document.getElementById("playwright-cursor");
-		if (cursor) cursor.style.display = "block";
-	});
+		if (cursor) {
+			cursor.style.left = `${x}px`;
+			cursor.style.top = `${y}px`;
+			cursor.style.display = "block";
+		}
+	}, pos);
 }
 
 export async function updateCursorPosition(
@@ -428,7 +434,6 @@ async function getLocatorCenter(locator: Locator): Promise<MousePoint> {
 	const page = locator.page();
 	await smoothScrollToElement(page, locator);
 	await expect(locator).toBeVisible();
-	await expect(locator).toBeInViewport({ timeout: 5000 });
 
 	const box = await locator.boundingBox();
 	if (!box) {
