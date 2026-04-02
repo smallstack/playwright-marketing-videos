@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0](https://github.com/smallstack/playwright-marketing-videos/compare/playwright-marketing-videos-v0.5.0...playwright-marketing-videos-v0.6.0) (2026-04-02)
+
+
+### Added
+
+* **timeline:** introduce Timeline class for segment-based video recording ([d484810](https://github.com/smallstack/playwright-marketing-videos/commit/d484810d99b49f27960c4b1b70cb1d7d54c9d4ac))
+* update cursor position handling in addVisibleCursor and showCursor functions ([bb422ba](https://github.com/smallstack/playwright-marketing-videos/commit/bb422ba777c4742c8275595ecc92eaac5aaee687))
+* update Playwright to v1.59.1 and enhance banner functionality with fade-in/out effects ([c943d1a](https://github.com/smallstack/playwright-marketing-videos/commit/c943d1a327c3cde10b6bef659c98fd00a646ceb1))
+* upgrade to Playwright v1.59 screencast API for overlays and high-res recording ([f1cd35f](https://github.com/smallstack/playwright-marketing-videos/commit/f1cd35fd63a03aafa9af92988db502d19112690f))
+* upgrade to Playwright v1.59 screencast API for overlays and high-res recording ([d941202](https://github.com/smallstack/playwright-marketing-videos/commit/d9412021cfd8b71ee5e91440bb9ff7e22f8f9317))
+
 ## [0.5.0](https://github.com/smallstack/playwright-marketing-videos/compare/playwright-marketing-videos-v0.4.0...playwright-marketing-videos-v0.5.0) (2026-03-17)
 
 
