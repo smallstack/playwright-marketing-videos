@@ -39,7 +39,6 @@
   - [Kokoro (Default — Free \& Local)](#kokoro-default--free--local)
   - [ElevenLabs](#elevenlabs)
   - [`generateAudioLayer(options)`](#generateaudiolayeroptions)
-  - [`playAudio(page, audioLayer, waitForAudioToFinish?)`](#playaudiopage-audiolayer-waitforaudiotofinish)
   - [Audio Cache](#audio-cache)
   - [Migrating from v0.2.x](#migrating-from-v02x)
 - [Video Overlays](#video-overlays)
@@ -49,6 +48,13 @@
   - [`playVideoOverlay(page, overlay, waitForVideoToFinish?)`](#playvideooverlaypage-overlay-waitforvideotofinish)
   - [Custom Video Providers](#custom-video-providers)
   - [Video Cache](#video-cache)
+- [Timeline (Segment-based Recording)](#timeline-segment-based-recording)
+  - [Why Timeline?](#why-timeline)
+  - [Basic Usage](#basic-usage)
+  - [Timeline with Audio](#timeline-with-audio)
+  - [Fade Transitions](#fade-transitions)
+  - [Banner Segments](#banner-segments)
+  - [Timeline API Reference](#timeline-api-reference)
 - [API](#api)
   - [`test` / `expect`](#test--expect)
   - [`showBanner(page, title, options?)`](#showbannerpage-title-options)
@@ -67,51 +73,28 @@
 
 ## Quick Example
 
-A minimal example with voice-over narration and a video intro — note how `generateAudioLayer` and `generateVideoOverlay` are called in `beforeAll` so their results are ready before the test runs (the first call may take minutes to download models or generate media):
+A minimal example with voice-over narration — the `timeline` fixture records video in segments and composes them with audio in post-production, so narration is always perfectly synced regardless of page load times:
 
 ```ts
-import {
-  test,
-  showBanner,
-  generateAudioLayer,
-  playAudio,
-  generateVideoOverlay,
-  playVideoOverlay,
-  type AudioLayer,
-  type VideoOverlay
-} from "playwright-marketing-videos";
+import { test, showBanner } from "playwright-marketing-videos";
 
-let introAudio: AudioLayer;
-let introVideo: VideoOverlay;
-
-test.beforeAll(async () => {
-  // Pre-generate audio & video so the test itself runs without long pauses.
-  // First run downloads an ~86 MB TTS model and generates media — subsequent
-  // runs are served from cache in milliseconds.
-  introAudio = await generateAudioLayer({
-    text: "Welcome to Acme — the fastest way to ship.",
-  });
-
-  introVideo = await generateVideoOverlay({
-    prompt: "Cinematic zoom into a glowing laptop showing a sleek dashboard",
-    durationSec: 5,
-  });
-});
-
-test("quick product intro", async ({ page }) => {
+test("quick product intro", async ({ page, timeline }) => {
+  // Setup — not recorded
   await page.goto("https://your-app.com");
 
-  // Play AI-generated video intro
-  await playVideoOverlay(page, introVideo);
+  // Start recording
+  await timeline.start();
 
   // Show a banner with voice-over
-  await showBanner(page, "Acme — Ship Faster");
-  await playAudio(page, introAudio, true);
+  await showBanner(page, { text: "Acme — Ship Faster", duration: 3000 });
+
+  await timeline.playAudio({ text: "Welcome to Acme — the fastest way to ship." });
 
   // Interactions are automatically animated (smooth cursor, typing, ripples)
   await page.getByRole("button", { name: "Get Started" }).click();
   await page.getByLabel("Email").fill("user@example.com");
 });
+// → marketing-videos/quick-product-intro.mp4
 ```
 
 ## Installation
@@ -120,20 +103,27 @@ test("quick product intro", async ({ page }) => {
 npm install playwright-marketing-videos
 ```
 
-> **Peer dependency:** `@playwright/test` >= 1.40.0 must be installed in your project.
+> **Peer dependency:** `@playwright/test` >= 1.59.0 must be installed in your project.
 
 ## Quick Start
 
 Replace your usual `@playwright/test` import with this package:
 
 ```ts
-import { test, expect, showBanner, generateAudioLayer, playAudio } from "playwright-marketing-videos";
+import { test, expect, showBanner } from "playwright-marketing-videos";
 
-test("product demo", async ({ page }) => {
+test("product demo", async ({ page, timeline }) => {
+  // Setup — not recorded
   await page.goto("https://your-app.com");
 
+  // Start recording
+  await timeline.start();
+
   // Show a title banner with fade-in/out
-  await showBanner(page, "My Awesome Feature");
+  await showBanner(page, { text: "My Awesome Feature", duration: 3000 });
+
+  // Narrate — audio is synced to video segments automatically
+  await timeline.playAudio({ text: "Let me show you this awesome feature." });
 
   // All interactions are now automatically animated:
   // - Mouse moves in smooth bezier curves
@@ -142,6 +132,7 @@ test("product demo", async ({ page }) => {
   await page.getByRole("button", { name: "Get Started" }).click();
   await page.getByLabel("Email").fill("user@example.com");
 });
+// → marketing-videos/product-demo.mp4
 ```
 
 ## Playwright Config
@@ -203,49 +194,28 @@ npx playwright test --config playwright.marketing.config.ts
 
 ### Full Product Demo with Voice-Over
 
-A complete example combining banners, voice-over narration, UI interactions, and highlights. All audio is pre-generated in `beforeAll` so the test runs smoothly:
+A complete example combining banners, voice-over narration, UI interactions, and highlights. Audio is synced to video segments automatically via the Timeline:
 
 ```ts
 import {
   test,
-  expect,
   showBanner,
-  generateAudioLayer,
-  playAudio,
   highlightElement,
-  moveMouse,
-  type AudioLayer
 } from "playwright-marketing-videos";
 
-let intro: AudioLayer;
-let narration: AudioLayer;
-let templates: AudioLayer;
+test("full product demo", async ({ page, timeline }) => {
+  // Setup — not recorded
+  await page.goto("https://acme.example.com");
 
-test.beforeAll(async () => {
-  intro = await generateAudioLayer({
-    text: "Welcome to Acme — the fastest way to manage your projects.",
-  });
-  narration = await generateAudioLayer({
-    text: "Let me show you how easy it is to create a new project.",
-  });
-  templates = await generateAudioLayer({
-    text: "Choose from dozens of pre-built templates to get started instantly.",
-  });
-});
+  // Start recording
+  await timeline.start();
 
-test("full product demo", async ({ page }) => {
-  await showBanner(page, "Acme — Project Management", {
-    duration: 4000,
-    callback: async () => {
-      await page.goto("https://acme.example.com");
-    }
-  });
+  await showBanner(page, { text: "Acme — Project Management", duration: 4000 });
 
-  await playAudio(page, intro, true);
+  await timeline.playAudio({ text: "Welcome to Acme — the fastest way to manage your projects." });
+  await page.waitForLoadState("networkidle");
 
-  // Navigate and narrate
-  await playAudio(page, narration);
-
+  await timeline.playAudio({ text: "Let me show you how easy it is to create a new project." });
   await page.getByRole("button", { name: "New Project" }).click();
   await page.getByLabel("Project name").fill("My First Project");
 
@@ -255,8 +225,7 @@ test("full product demo", async ({ page }) => {
     zoomScale: 1.08
   });
 
-  await playAudio(page, templates, true);
-
+  await timeline.playAudio({ text: "Choose from dozens of pre-built templates to get started instantly." });
   await page.getByRole("button", { name: "Create" }).click();
 });
 ```
@@ -270,15 +239,11 @@ import {
   test,
   generateVideoOverlay,
   playVideoOverlay,
-  generateAudioLayer,
-  playAudio,
   showBanner,
-  type AudioLayer,
   type VideoOverlay
 } from "playwright-marketing-videos";
 
 let introVideo: VideoOverlay;
-let narration: AudioLayer;
 
 test.beforeAll(async () => {
   introVideo = await generateVideoOverlay({
@@ -286,52 +251,41 @@ test.beforeAll(async () => {
     durationSec: 5,
     aspectRatio: "16:9"
   });
-
-  narration = await generateAudioLayer({
-    text: "Introducing the next generation of project analytics."
-  });
 });
 
-test("video intro demo", async ({ page }) => {
+test("video intro demo", async ({ page, timeline }) => {
   await page.goto("https://your-app.com");
 
+  await timeline.start();
+
   await playVideoOverlay(page, introVideo);
-  await playAudio(page, narration, true);
+
+  await timeline.playAudio({ text: "Introducing the next generation of project analytics." });
 
   // Continue with the product demo
-  await showBanner(page, "Real-Time Analytics Dashboard");
+  await showBanner(page, { text: "Real-Time Analytics Dashboard", duration: 3000 });
   await page.getByRole("link", { name: "Dashboard" }).click();
 });
 ```
 
 ### Background Audio While Interacting
 
-Play voice-over narration in the background while performing animated interactions:
+Play voice-over narration while performing animated interactions — the audio is synced to this segment in post-production:
 
 ```ts
-import {
-  test,
-  generateAudioLayer,
-  playAudio,
-  moveMouse,
-  type AudioLayer
-} from "playwright-marketing-videos";
+import { test } from "playwright-marketing-videos";
 
-let narration: AudioLayer;
-
-test.beforeAll(async () => {
-  narration = await generateAudioLayer({
-    text: "The settings page gives you full control over notifications, privacy, and appearance.",
-  });
-});
-
-test("background narration", async ({ page }) => {
+test("background narration", async ({ page, timeline }) => {
   await page.goto("https://your-app.com/settings");
 
-  // Start narration without waiting — it plays while we interact
-  await playAudio(page, narration); // no `true` = don't wait
+  await timeline.start();
 
-  // These interactions happen while the audio plays
+  // Narrate — audio plays over the interactions that follow
+  await timeline.playAudio({
+    text: "The settings page gives you full control over notifications, privacy, and appearance.",
+  });
+
+  // These interactions are recorded as the segment for the audio above
   await page.getByRole("tab", { name: "Notifications" }).click();
   await page.getByLabel("Email alerts").check();
   await page.getByRole("tab", { name: "Appearance" }).click();
@@ -391,36 +345,31 @@ import {
   test,
   generateVideoOverlay,
   playVideoOverlay,
-  generateAudioLayer,
-  playAudio,
   showBanner,
   UrlVideoProvider,
-  type AudioLayer,
   type VideoOverlay
 } from "playwright-marketing-videos";
 
 let brandIntro: VideoOverlay;
-let narration: AudioLayer;
 
 test.beforeAll(async () => {
   brandIntro = await generateVideoOverlay({
     prompt: "Brand intro video",
     provider: new UrlVideoProvider("https://cdn.example.com/videos/brand-intro.mp4")
   });
-
-  narration = await generateAudioLayer({
-    text: "Built by developers, for developers."
-  });
 });
 
-test("branded intro from URL", async ({ page }) => {
+test("branded intro from URL", async ({ page, timeline }) => {
   await page.goto("https://your-app.com");
 
+  await timeline.start();
+
   await playVideoOverlay(page, brandIntro);
-  await playAudio(page, narration, true);
+
+  await timeline.playAudio({ text: "Built by developers, for developers." });
 
   // Continue with the live product demo
-  await showBanner(page, "Let's dive in.");
+  await showBanner(page, { text: "Let's dive in.", duration: 3000 });
   await page.getByRole("button", { name: "Get Started" }).click();
 });
 ```
@@ -458,27 +407,22 @@ test("mobile promo", async ({ page }) => {
 Use ElevenLabs for higher-quality, multilingual narration:
 
 ```ts
-import { test, generateAudioLayer, playAudio, showBanner, type AudioLayer } from "playwright-marketing-videos";
+import { test, showBanner } from "playwright-marketing-videos";
 
-let intro: AudioLayer;
+test("premium voice demo", async ({ page, timeline }) => {
+  await page.goto("https://your-app.com");
 
-test.beforeAll(async () => {
-  intro = await generateAudioLayer({
+  await timeline.start();
+
+  await showBanner(page, { text: "Productivity Reimagined", duration: 3000 });
+
+  await timeline.playAudio({
     provider: "elevenlabs",
     text: "Welcome to the future of productivity. Let us show you what's possible.",
     voiceId: "21m00Tcm4TlvDq8ikWAM",
     modelId: "eleven_multilingual_v2"
   });
-});
 
-test("premium voice demo", async ({ page }) => {
-  await page.goto("https://your-app.com");
-
-  await showBanner(page, "Productivity Reimagined", {
-    callback: async () => await page.goto("https://your-app.com/tour")
-  });
-
-  await playAudio(page, intro, true);
   await page.getByRole("button", { name: "Start Tour" }).click();
 });
 ```
@@ -501,12 +445,10 @@ npm install kokoro-js
 ```ts
 // Default provider — no API key needed!
 // First call downloads an ~86MB model (cached after that)
-const audio = await generateAudioLayer({
+await timeline.playAudio({
   text: "Welcome to our product demo!",
   voice: "af_sky",  // Optional (default: "af_heart")
 });
-
-await playAudio(page, audio, true);
 ```
 
 Available options:
@@ -525,14 +467,12 @@ export ELEVENLABS_API_KEY="your-api-key-here"
 ```
 
 ```ts
-const audio = await generateAudioLayer({
+await timeline.playAudio({
   provider: "elevenlabs",
   text: "Welcome to our product demo!",
   voiceId: "21m00Tcm4TlvDq8ikWAM",
   modelId: "eleven_multilingual_v2"  // Optional (this is the default)
 });
-
-await playAudio(page, audio, true);
 ```
 
 Get an API key at [elevenlabs.io](https://elevenlabs.io).
@@ -542,18 +482,6 @@ Get an API key at [elevenlabs.io](https://elevenlabs.io).
 Generates an audio file from text using the configured TTS provider.
 
 **Returns:** `AudioLayer` object with `{ filePath, text, voiceId? }`.
-
-### `playAudio(page, audioLayer, waitForAudioToFinish?)`
-
-Injects the generated audio into the page and plays it.
-
-```ts
-// Play audio and continue immediately
-await playAudio(page, audio);
-
-// Or wait for audio to finish before continuing
-await playAudio(page, audio, true);
-```
 
 ### Audio Cache
 
@@ -700,6 +628,114 @@ Generated videos are cached locally in a `__video_cache/` directory (created in 
 - If a generation task times out, the provider can store intermediate state (e.g. pending task IDs) in the cache directory so the next run resumes polling instead of creating a new task
 - The cache directory can be safely deleted to regenerate all videos
 - Add `__video_cache/` to `.gitignore` if you don't want to commit cached video files, or commit them to avoid regenerating in CI
+
+## Timeline (Segment-based Recording)
+
+### Why Timeline?
+
+Playwright cannot record audio, and page load times are non-deterministic (0-2 seconds). This makes it impossible to pre-compose a fixed audio timeline that stays in sync with the video.
+
+The Timeline system solves this by recording video in discrete segments using the screencast API. Each call to `timeline.playAudio()` creates a "cut point" — it stops the current segment and starts a new one. Audio is attached to the segment it triggered, and everything is stitched together with ffmpeg in post-production. Since each audio clip is paired with its exact video segment, timing is always perfect regardless of load times.
+
+**Requirements:** `ffmpeg` and `ffprobe` must be installed on your system for composition.
+
+### Basic Usage
+
+Destructure `timeline` from the test fixture. Recording does NOT start automatically — call `timeline.start()` when you're ready. This lets you set up test data without recording the setup:
+
+```ts
+import { test } from "playwright-marketing-videos";
+
+test("product demo", async ({ page, timeline }) => {
+  // Setup phase — not recorded
+  await page.goto("https://app.example.com/setup");
+  await createDemoUser(page);
+
+  // Start recording
+  await timeline.start();
+
+  await page.goto("https://app.example.com");
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByLabel("Name").fill("My Project");
+});
+// → marketing-videos/product-demo.mp4 is composed automatically
+```
+
+The output file is derived from the test title (`"product demo"` → `product-demo.mp4`) and placed in `marketing-videos/`.
+
+### Timeline with Audio
+
+`timeline.playAudio()` generates TTS audio and creates a cut point. The audio is attached to the segment that starts after the call — it plays over the upcoming actions:
+
+```ts
+import { test, showBanner } from "playwright-marketing-videos";
+
+test("demo with narration", async ({ page, timeline }) => {
+  await page.goto("https://app.example.com/setup");
+  await seedTestData(page);
+
+  await timeline.start();
+
+  await showBanner(page, { text: "Acme — Ship Faster", duration: 3000 });
+
+  await timeline.playAudio({ text: "Welcome to Acme. Let me show you around." });
+  await page.goto("https://app.example.com");
+  await page.waitForLoadState("networkidle");
+
+  await timeline.playAudio({ text: "Creating a new project is easy." });
+  await page.getByRole("button", { name: "New Project" }).click();
+  await page.getByLabel("Name").fill("My Project");
+
+  await timeline.playAudio({ text: "And you're done!" });
+  await page.getByRole("button", { name: "Create" }).click();
+});
+```
+
+This produces a video with three narrated segments, each perfectly synced regardless of how long page loads take.
+
+### Fade Transitions
+
+Add per-segment fade-in/fade-out transitions via `timeline.cut()` or `timeline.playAudio()`:
+
+```ts
+// Cut with a fade-out on the current segment and fade-in on the next
+await timeline.cut({ fadeOutMs: 500, fadeInMs: 300 });
+
+// Or attach fades to an audio cut point
+await timeline.playAudio(
+  { text: "Next chapter..." },
+  { fadeInMs: 400, fadeOutMs: 400 }
+);
+```
+
+### Banner Segments
+
+Insert a banner as its own discrete segment using `timeline.addSegment()`. The banner is recorded via the screencast and composited like any other segment:
+
+```ts
+await timeline.addSegment({
+  type: "banner",
+  bannerOptions: { text: "Chapter 2: Advanced Features", duration: 3000 },
+  durationMs: 3000,
+  fadeInMs: 300,
+  fadeOutMs: 300,
+});
+```
+
+### Timeline API Reference
+
+| Method | Description |
+|---|---|
+| `timeline.start()` | Start recording the first screencast segment |
+| `timeline.stop()` | Stop recording and finalize the last segment |
+| `timeline.playAudio(audioOptions, segmentOptions?)` | Generate TTS audio, cut the screencast, attach audio to the next segment |
+| `timeline.cut(options?)` | Cut the current segment and start a new one. Options: `audio`, `fadeInMs`, `fadeOutMs` |
+| `timeline.addSegment(segment)` | Insert a non-screencast segment (banner, video overlay) |
+| `timeline.compose(outputPath)` | Stitch all segments + audio into a final mp4 using ffmpeg |
+| `timeline.getSegments()` | Get all segments in order |
+| `timeline.writeManifest(outputFile)` | Write a `timeline.json` manifest to disk |
+
+The `timeline.json` manifest contains all segment metadata (paths, durations, offsets, audio references) for debugging or external tooling.
 
 ## API
 
@@ -876,7 +912,14 @@ import type {
   MoveMouseOptions,
   MoveMouseInNiceCurveOptions,
   VideoProvider,
-  UrlVideoProvider
+  UrlVideoProvider,
+  Timeline,
+  TimelineOptions,
+  TimelineSegment,
+  TimelineManifest,
+  ScreencastSegment,
+  BannerSegment,
+  VideoOverlaySegment
 } from "playwright-marketing-videos";
 ```
 

@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { promisify } from "node:util";
 import {
 	test as base,
 	type Disposable,
@@ -8,6 +10,8 @@ import {
 	type Locator,
 	type Page
 } from "@playwright/test";
+
+const execFileAsync = promisify(execFile);
 
 // ============================================================================
 // Types
@@ -107,6 +111,58 @@ export interface VideoProvider {
 		cacheKey?: string;
 	}): Promise<Buffer>;
 }
+
+// ---- Timeline types ----
+
+type TimelineSegmentBase = {
+	id: string;
+	/** Fade-in transition duration in ms (applied during compose) */
+	fadeInMs?: number;
+	/** Fade-out transition duration in ms (applied during compose) */
+	fadeOutMs?: number;
+};
+
+export type ScreencastSegment = TimelineSegmentBase & {
+	type: "screencast";
+	videoPath: string;
+	audio?: AudioLayer;
+	durationMs?: number;
+};
+
+export type BannerSegment = TimelineSegmentBase & {
+	type: "banner";
+	bannerOptions: ShowBannerOptions;
+	videoPath: string;
+	durationMs: number;
+	audio?: AudioLayer;
+};
+
+export type VideoOverlaySegment = TimelineSegmentBase & {
+	type: "video-overlay";
+	videoPath: string;
+	durationMs: number;
+	audio?: AudioLayer;
+};
+
+export type TimelineSegment =
+	| ScreencastSegment
+	| BannerSegment
+	| VideoOverlaySegment;
+
+export type TimelineManifest = {
+	version: 1;
+	createdAt: string;
+	totalDurationMs: number;
+	outputFile: string;
+	size?: { width: number; height: number };
+	segments: Array<TimelineSegment & { offsetMs: number }>;
+};
+
+export type TimelineOptions = {
+	page: Page;
+	outputDir: string;
+	size?: { width: number; height: number };
+};
 
 // ============================================================================
 // State
@@ -515,8 +571,9 @@ export async function moveMouseInNiceCurve(
 	const distance = Math.hypot(dx, dy);
 
 	const durationMs =
-		options?.durationMs ?? clamp(Math.round(distance * 2.33 + 300), 600, 1867);
-	const steps = options?.steps ?? clamp(Math.round(durationMs / 18), 30, 140);
+		options?.durationMs ??
+		clamp(Math.round((distance * 2.33 + 300) / 3), 200, 622);
+	const steps = options?.steps ?? clamp(Math.round(durationMs / 18), 10, 50);
 	const seed = options?.seed ?? createSeedFromPoints(start, end);
 	const rand = mulberry32(seed);
 
@@ -793,7 +850,7 @@ export async function showBanner(
 		await page.evaluate(() => {
 			const banner = document.getElementById("playwright-marketing-banner");
 			if (banner) {
-				window.name = "__pmv:" + banner.outerHTML;
+				window.name = `__pmv:${banner.outerHTML}`;
 			}
 		});
 
@@ -998,179 +1055,6 @@ async function generateElevenLabsAudio(
 			`Failed to generate audio from ElevenLabs API: ${error instanceof Error ? error.message : String(error)}`
 		);
 	}
-}
-
-/**
- * Injects and plays an audio file in the Playwright page.
- *
- * When `waitForAudioToFinish` is false (the default), the function returns
- * immediately so interactions can run on top of the audio. However, the next
- * call to `playAudio` will automatically wait for any previously playing
- * audio to finish before starting the new clip.
- *
- * @param page - Playwright page instance
- * @param audioLayer - AudioLayer object containing the file path to the audio
- * @param waitForAudioToFinish - Whether to wait for the audio to finish playing before returning
- */
-export async function playAudio(
-	page: Page,
-	audioLayer: AudioLayer,
-	waitForAudioToFinish: boolean = false
-): Promise<void> {
-	// Auto-wait: if a previous audio is still playing, wait for it to finish
-	try {
-		await page.evaluate(() => {
-			const existing = document.getElementById(
-				"playwright-marketing-audio"
-			) as HTMLAudioElement | null;
-			if (!existing || existing.ended) return Promise.resolve();
-			return new Promise<void>((resolve) => {
-				existing.addEventListener("ended", () => resolve(), { once: true });
-			});
-		});
-	} catch {
-		// Navigation may have destroyed the page context — safe to proceed
-	}
-
-	const audioBuffer = fs.readFileSync(audioLayer.filePath);
-	const audioBase64 = audioBuffer.toString("base64");
-	const ext = path.extname(audioLayer.filePath).slice(1);
-	const mimeType = ext === "wav" ? "audio/wav" : "audio/mpeg";
-
-	await page.evaluate(
-		({ audio, mimeType }) => {
-			const oldAudio = document.getElementById("playwright-marketing-audio");
-			if (oldAudio) oldAudio.remove();
-
-			const audioElement = document.createElement("audio");
-			audioElement.id = "playwright-marketing-audio";
-			audioElement.style.cssText = `
-				position: fixed;
-				bottom: 20px;
-				right: 20px;
-				z-index: 2147483647;
-				opacity: 0;
-				pointer-events: none;
-			`;
-
-			audioElement.src = `data:${mimeType};base64,${audio}`;
-			audioElement.autoplay = false;
-
-			document.body.appendChild(audioElement);
-		},
-		{ audio: audioBase64, mimeType }
-	);
-
-	const duration = await page.evaluate(() => {
-		const audioElement = document.getElementById(
-			"playwright-marketing-audio"
-		) as HTMLAudioElement;
-		return new Promise<number>((resolve) => {
-			if (audioElement.duration && !Number.isNaN(audioElement.duration)) {
-				resolve(audioElement.duration * 1000);
-			} else {
-				audioElement.addEventListener("loadedmetadata", () => {
-					resolve(audioElement.duration * 1000);
-				});
-			}
-		});
-	});
-
-	await page.waitForTimeout(100);
-	await page.evaluate(async () => {
-		await (
-			document.getElementById("playwright-marketing-audio") as HTMLAudioElement
-		).play();
-	});
-
-	if (
-		waitForAudioToFinish === true &&
-		!Number.isNaN(duration) &&
-		duration > 0
-	) {
-		await page.waitForTimeout(duration);
-
-		await page.evaluate(() => {
-			const audioElement = document.getElementById(
-				"playwright-marketing-audio"
-			);
-			if (audioElement) {
-				audioElement.remove();
-			}
-		});
-	}
-}
-
-// ============================================================================
-// Audio + Slow Scroll
-// ============================================================================
-
-export type PlayAudioWithScrollOptions = {
-	/** Locator of the scrollable container. Defaults to the window. */
-	scrollContainer?: Locator;
-	/** Total pixels to scroll down. Defaults to what the speed allows within the audio duration. */
-	scrollDistance?: number;
-	/** Speed in pixels per second. Defaults to 50. */
-	scrollSpeed?: number;
-};
-
-/**
- * Plays audio while slowly scrolling downward for the duration of the audio.
- */
-export async function playAudioWithScroll(
-	page: Page,
-	audioLayer: AudioLayer,
-	options?: PlayAudioWithScrollOptions
-): Promise<void> {
-	const scrollSpeed = options?.scrollSpeed ?? 50;
-	const container = options?.scrollContainer;
-
-	await showScrollAnimation(page);
-
-	// Start audio (non-blocking)
-	await playAudio(page, audioLayer, false);
-
-	// Get audio duration from the element we just injected
-	const duration = await page.evaluate(() => {
-		const el = document.getElementById(
-			"playwright-marketing-audio"
-		) as HTMLAudioElement | null;
-		if (!el) return 0;
-		if (el.duration && !Number.isNaN(el.duration)) return el.duration * 1000;
-		return new Promise<number>((resolve) => {
-			el.addEventListener("loadedmetadata", () => {
-				resolve(el.duration * 1000);
-			});
-		});
-	});
-
-	if (!duration || duration <= 0) {
-		await hideScrollAnimation(page);
-		return;
-	}
-
-	const maxDistance = container
-		? await container.evaluate((el) => el.scrollHeight - el.clientHeight)
-		: await page.evaluate(
-				() => document.documentElement.scrollHeight - window.innerHeight
-			);
-
-	const distanceBySpeed = (scrollSpeed * duration) / 1000;
-	const distance = options?.scrollDistance
-		? Math.min(options.scrollDistance, maxDistance)
-		: Math.min(distanceBySpeed, maxDistance);
-
-	// Scroll using mouse wheel events — works regardless of which element is scrollable
-	const stepInterval = 50;
-	const steps = Math.ceil(duration / stepInterval);
-	const pixelsPerStep = distance / steps;
-
-	for (let i = 0; i < steps; i++) {
-		await page.mouse.wheel(0, pixelsPerStep);
-		await page.waitForTimeout(stepInterval);
-	}
-
-	await hideScrollAnimation(page);
 }
 
 // ============================================================================
@@ -1595,6 +1479,526 @@ export async function stopScreencast(page: Page): Promise<void> {
 }
 
 // ============================================================================
+// Timeline
+// ============================================================================
+
+/**
+ * Records a Playwright screencast as discrete segments that can be composed
+ * with audio in post-production.  Each call to `cut()` or `playAudio()` ends
+ * the current segment and starts a new one.  After the test, call `compose()`
+ * to stitch all segments + audio into a single mp4 using ffmpeg.
+ *
+ * Segments are generic — screencast captures, banners, and video overlays
+ * are all supported and can carry per-segment properties like fadeIn/fadeOut.
+ */
+export class Timeline {
+	private page: Page;
+	private outputDir: string;
+	private size?: { width: number; height: number };
+
+	private segments: TimelineSegment[] = [];
+	private segmentCounter = 0;
+	private currentRecording: Disposable | null = null;
+	private currentSegmentStart = 0;
+	private currentFrameDir = "";
+	private currentFrameCount = 0;
+	private currentFrameTimestamps: number[] = [];
+	private frameTickInterval: ReturnType<typeof setInterval> | null = null;
+	private lastFrameData: Buffer | null = null;
+	private started = false;
+
+	constructor(options: TimelineOptions) {
+		this.page = options.page;
+		this.outputDir = path.resolve(options.outputDir);
+		this.size = options.size;
+	}
+
+	/** Start recording the first screencast segment. */
+	async start(): Promise<void> {
+		if (this.started) return;
+		this.started = true;
+
+		// Default to the page's viewport size for the screencast recording.
+		// Without this, the screencast may record at a much lower resolution.
+		if (!this.size) {
+			const viewport = this.page.viewportSize();
+			if (viewport) {
+				this.size = { width: viewport.width, height: viewport.height };
+			}
+		}
+
+		if (!fs.existsSync(this.outputDir)) {
+			fs.mkdirSync(this.outputDir, { recursive: true });
+		}
+
+		await this.startNewSegment();
+	}
+
+	/**
+	 * Cut the current screencast segment and start a new one.
+	 * Options (fadeInMs, fadeOutMs, audio) are applied to the NEW segment.
+	 */
+	async cut(options?: {
+		audio?: AudioLayer;
+		fadeInMs?: number;
+		fadeOutMs?: number;
+	}): Promise<TimelineSegment> {
+		const finalized = await this.finalizeCurrentSegment();
+		await this.startNewSegment({
+			audio: options?.audio,
+			fadeInMs: options?.fadeInMs,
+			fadeOutMs: options?.fadeOutMs
+		});
+		return finalized;
+	}
+
+	/**
+	 * Create a cut point with audio attached to the next segment.
+	 *
+	 * Accepts either a pre-generated `AudioLayer` or `GenerateAudioLayerOptions`
+	 * to generate audio on the fly.
+	 *
+	 * When `wait` is true, waits for the audio duration before returning.
+	 * The page stays live during the wait (recording whatever is on screen).
+	 */
+	async playAudio(
+		audioOrOptions: AudioLayer | GenerateAudioLayerOptions,
+		segmentOptions?: {
+			fadeInMs?: number;
+			fadeOutMs?: number;
+			/** Wait for the audio duration before continuing. */
+			wait?: boolean;
+		}
+	): Promise<AudioLayer> {
+		const audio =
+			"filePath" in audioOrOptions
+				? audioOrOptions
+				: await generateAudioLayer(audioOrOptions);
+		await this.cut({
+			audio,
+			fadeInMs: segmentOptions?.fadeInMs,
+			fadeOutMs: segmentOptions?.fadeOutMs
+		});
+
+		// Play audio in the browser for debugging in headed mode.
+		// In headless mode this is a no-op (no audio device).
+		await this.playAudioInBrowser(audio);
+
+		if (segmentOptions?.wait) {
+			const durationMs = await this.probeDuration(audio.filePath);
+			await this.page.waitForTimeout(durationMs);
+		}
+
+		return audio;
+	}
+
+	/**
+	 * Insert a non-screencast segment (e.g. banner or video overlay).
+	 * Stops the current screencast, records the segment via screencast,
+	 * then starts a new screencast segment afterwards.
+	 */
+	async addSegment(
+		segment:
+			| Omit<BannerSegment, "id" | "videoPath">
+			| Omit<VideoOverlaySegment, "id" | "videoPath">
+	): Promise<TimelineSegment> {
+		await this.finalizeCurrentSegment();
+
+		const segId = this.nextSegmentId();
+		const videoPath = path.join(this.outputDir, `${segId}.webm`);
+
+		// Record the banner/overlay as a screencast segment
+		this.currentRecording = await this.page.screencast.start({
+			path: videoPath,
+			size: this.size,
+			quality: 100
+		});
+		this.currentSegmentStart = Date.now();
+
+		if (segment.type === "banner") {
+			await showBanner(this.page, segment.bannerOptions);
+		}
+
+		await this.page.waitForTimeout(segment.durationMs);
+		await this.page.screencast.stop();
+		this.currentRecording = null;
+
+		const full: TimelineSegment = {
+			...segment,
+			id: segId,
+			videoPath,
+			durationMs: segment.durationMs
+		} as TimelineSegment;
+
+		this.segments.push(full);
+
+		// Resume screencast recording
+		await this.startNewSegment();
+
+		return full;
+	}
+
+	/** Stop recording and finalize the last segment. */
+	async stop(): Promise<void> {
+		if (!this.started) return;
+		await this.finalizeCurrentSegment();
+		this.started = false;
+	}
+
+	/** Get all segments in order. */
+	getSegments(): readonly TimelineSegment[] {
+		return this.segments;
+	}
+
+	/** Write the timeline manifest to disk. */
+	async writeManifest(outputFile: string): Promise<TimelineManifest> {
+		const segmentsWithOffset: Array<TimelineSegment & { offsetMs: number }> =
+			[];
+		let offset = 0;
+		for (const seg of this.segments) {
+			const duration = seg.durationMs ?? 0;
+			segmentsWithOffset.push({ ...seg, offsetMs: offset });
+			offset += duration;
+		}
+
+		const manifest: TimelineManifest = {
+			version: 1,
+			createdAt: new Date().toISOString(),
+			totalDurationMs: offset,
+			outputFile,
+			size: this.size,
+			segments: segmentsWithOffset
+		};
+
+		const manifestPath = path.join(this.outputDir, "timeline.json");
+		fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+		return manifest;
+	}
+
+	/**
+	 * Compose all segments + audio into a final mp4 using ffmpeg.
+	 * Requires ffmpeg and ffprobe on PATH.
+	 */
+	async compose(outputPath: string): Promise<string> {
+		outputPath = path.resolve(outputPath);
+
+		if (this.segments.length === 0) {
+			throw new Error("Timeline has no segments to compose");
+		}
+
+		await this.assertFfmpegAvailable();
+
+		const segCount = this.segments.length;
+		const audioCount = this.segments.filter((s) => s.audio?.filePath).length;
+		console.log(
+			`[Timeline] Composing ${segCount} segments (${audioCount} with audio)…`
+		);
+
+		// 1. Probe each segment for exact duration
+		for (const seg of this.segments) {
+			if (seg.durationMs == null && seg.videoPath) {
+				seg.durationMs = await this.probeDuration(seg.videoPath);
+			}
+		}
+
+		// 2. Write manifest
+		await this.writeManifest(outputPath);
+
+		const outputDir = path.dirname(outputPath);
+		if (!fs.existsSync(outputDir)) {
+			fs.mkdirSync(outputDir, { recursive: true });
+		}
+
+		// 3. Concat all segments into a single video, transcoding once to h264
+		const concatListPath = path.join(this.outputDir, "concat_list.txt");
+		const concatContent = this.segments
+			.map((s) => `file '${path.resolve(s.videoPath)}'`)
+			.join("\n");
+		fs.writeFileSync(concatListPath, concatContent);
+
+		console.log("[Timeline] Concatenating segments…");
+		const concatPath = path.join(this.outputDir, "concat_raw.mp4");
+		await execFileAsync("ffmpeg", [
+			"-y",
+			"-f",
+			"concat",
+			"-safe",
+			"0",
+			"-i",
+			concatListPath,
+			// Segments are already h264 mp4 — stream copy, no re-encoding
+			"-c",
+			"copy",
+			concatPath
+		]);
+
+		// 6. Overlay audio tracks at computed offsets
+		const audioSegments = this.segments.filter((s) => s.audio?.filePath);
+		if (audioSegments.length > 0) {
+			console.log(`[Timeline] Mixing ${audioSegments.length} audio tracks…`);
+			const totalDurationMs = this.segments.reduce(
+				(sum, s) => sum + (s.durationMs ?? 0),
+				0
+			);
+			const totalDurationSec = totalDurationMs / 1000;
+
+			const audioInputs: string[] = [];
+			const delayFilters: string[] = [];
+			const audioLabels: string[] = [];
+
+			let audioIdx = 0;
+			for (const seg of audioSegments) {
+				const offsetMs = this.getSegmentOffset(seg);
+				// audio input index is audioIdx + 1 (0 is the video)
+				audioInputs.push("-i", seg.audio?.filePath as string);
+				const label = `a${audioIdx}`;
+				delayFilters.push(
+					`[${audioIdx + 1}:a]adelay=${offsetMs}|${offsetMs}[${label}]`
+				);
+				audioLabels.push(`[${label}]`);
+				audioIdx++;
+			}
+
+			// amix normalizes volume by dividing by input count — use volume filter to compensate
+			const volumeBoost = audioIdx + 1;
+			const mixFilter = `anullsrc=r=44100:cl=stereo:d=${totalDurationSec}[base];${delayFilters.join(";")}; [base]${audioLabels.join("")}amix=inputs=${volumeBoost}:duration=first,volume=${volumeBoost}[aout]`;
+
+			await execFileAsync("ffmpeg", [
+				"-y",
+				"-i",
+				concatPath,
+				...audioInputs,
+				"-filter_complex",
+				mixFilter,
+				"-map",
+				"0:v",
+				"-map",
+				"[aout]",
+				"-c:v",
+				"copy",
+				"-c:a",
+				"aac",
+				"-shortest",
+				outputPath
+			]);
+		} else {
+			// No audio — just copy
+			fs.renameSync(concatPath, outputPath);
+		}
+
+		// 7. Clean up temp files
+		if (fs.existsSync(concatPath)) fs.unlinkSync(concatPath);
+		fs.unlinkSync(concatListPath);
+
+		console.log(`[Timeline] Video ready: ${outputPath}`);
+
+		return outputPath;
+	}
+
+	// ---- Private helpers ----
+
+	private nextSegmentId(): string {
+		const id = `seg_${String(this.segmentCounter).padStart(3, "0")}`;
+		this.segmentCounter++;
+		return id;
+	}
+
+	private async startNewSegment(options?: {
+		audio?: AudioLayer;
+		fadeInMs?: number;
+		fadeOutMs?: number;
+	}): Promise<void> {
+		const segId = this.nextSegmentId();
+		const frameDir = path.join(this.outputDir, segId);
+		fs.mkdirSync(frameDir, { recursive: true });
+
+		this.currentFrameDir = frameDir;
+		this.currentFrameCount = 0;
+		this.currentFrameTimestamps = [];
+		this.lastFrameData = null;
+
+		const segmentStartTime = Date.now();
+		this.currentSegmentStart = segmentStartTime;
+
+		const writeFrame = (data: Buffer) => {
+			const framePath = path.join(
+				frameDir,
+				`frame_${String(this.currentFrameCount).padStart(6, "0")}.jpg`
+			);
+			fs.writeFileSync(framePath, data);
+			this.currentFrameTimestamps.push(Date.now() - segmentStartTime);
+			this.currentFrameCount++;
+		};
+
+		// Capture high-quality JPEG frames via onFrame callback
+		// instead of relying on VP8's low-bitrate WebM recording.
+		this.currentRecording = await this.page.screencast.start({
+			size: this.size,
+			quality: 100,
+			onFrame: ({ data }) => {
+				this.lastFrameData = data;
+				writeFrame(data);
+			}
+		});
+
+		// Fill gaps at ~30fps by repeating the last frame when content
+		// hasn't changed — ensures smooth cursor movement in the video.
+		this.frameTickInterval = setInterval(() => {
+			if (this.lastFrameData) {
+				writeFrame(this.lastFrameData);
+			}
+		}, 1000 / 30);
+
+		// videoPath will be set after finalizing (assembled from frames)
+		const videoPath = path.join(this.outputDir, `${segId}.mp4`);
+		const segment: ScreencastSegment = {
+			id: segId,
+			type: "screencast",
+			videoPath,
+			audio: options?.audio,
+			fadeInMs: options?.fadeInMs,
+			fadeOutMs: options?.fadeOutMs
+		};
+		this.segments.push(segment);
+	}
+
+	private async finalizeCurrentSegment(): Promise<TimelineSegment> {
+		if (this.frameTickInterval) {
+			clearInterval(this.frameTickInterval);
+			this.frameTickInterval = null;
+		}
+
+		const elapsed = Date.now() - this.currentSegmentStart;
+		const current = this.segments[this.segments.length - 1];
+
+		if (this.currentRecording) {
+			await this.page.screencast.stop();
+			this.currentRecording = null;
+		}
+
+		if (current && current.durationMs == null) {
+			current.durationMs = elapsed;
+		}
+
+		// Assemble frames into a high-quality mp4 segment using
+		// per-frame durations (frames arrive at irregular intervals).
+		if (this.currentFrameCount > 0 && current?.videoPath) {
+			const timestamps = this.currentFrameTimestamps;
+
+			// Build concat demuxer input with per-frame durations
+			const lines: string[] = [];
+			for (let i = 0; i < this.currentFrameCount; i++) {
+				const framePath = path.join(
+					this.currentFrameDir,
+					`frame_${String(i).padStart(6, "0")}.jpg`
+				);
+				const durationSec =
+					i < timestamps.length - 1
+						? (timestamps[i + 1] - timestamps[i]) / 1000
+						: i > 0
+							? (elapsed - timestamps[i]) / 1000
+							: (elapsed || 1) / 1000;
+				lines.push(`file '${path.resolve(framePath)}'`);
+				lines.push(`duration ${Math.max(durationSec, 0.001)}`);
+			}
+			// Concat demuxer needs the last file repeated without duration
+			if (this.currentFrameCount > 0) {
+				const lastFrame = path.join(
+					this.currentFrameDir,
+					`frame_${String(this.currentFrameCount - 1).padStart(6, "0")}.jpg`
+				);
+				lines.push(`file '${path.resolve(lastFrame)}'`);
+			}
+
+			const frameListPath = path.join(this.currentFrameDir, "frames.txt");
+			fs.writeFileSync(frameListPath, lines.join("\n"));
+
+			await execFileAsync("ffmpeg", [
+				"-y",
+				"-f",
+				"concat",
+				"-safe",
+				"0",
+				"-i",
+				frameListPath,
+				"-c:v",
+				"libx264",
+				"-crf",
+				"1",
+				"-pix_fmt",
+				"yuv420p",
+				"-an",
+				current.videoPath
+			]);
+
+			// Clean up frame files
+			const frameFiles = fs.readdirSync(this.currentFrameDir);
+			for (const f of frameFiles) {
+				fs.unlinkSync(path.join(this.currentFrameDir, f));
+			}
+			fs.rmdirSync(this.currentFrameDir);
+		}
+
+		return current;
+	}
+
+	private async playAudioInBrowser(audio: AudioLayer): Promise<void> {
+		try {
+			const audioBuffer = fs.readFileSync(audio.filePath);
+			const audioBase64 = audioBuffer.toString("base64");
+			const ext = path.extname(audio.filePath).slice(1);
+			const mimeType = ext === "wav" ? "audio/wav" : "audio/mpeg";
+
+			await this.page.evaluate(
+				({ src, mimeType }) => {
+					const el = document.createElement("audio");
+					el.src = `data:${mimeType};base64,${src}`;
+					el.autoplay = true;
+					document.body.appendChild(el);
+					el.addEventListener("ended", () => el.remove(), { once: true });
+				},
+				{ src: audioBase64, mimeType }
+			);
+		} catch {
+			// Ignore — audio preview is best-effort
+		}
+	}
+
+	private getSegmentOffset(segment: TimelineSegment): number {
+		let offset = 0;
+		for (const seg of this.segments) {
+			if (seg.id === segment.id) return offset;
+			offset += seg.durationMs ?? 0;
+		}
+		return offset;
+	}
+
+	private async probeDuration(filePath: string): Promise<number> {
+		const { stdout } = await execFileAsync("ffprobe", [
+			"-v",
+			"error",
+			"-show_entries",
+			"format=duration",
+			"-of",
+			"default=noprint_wrappers=1:nokey=1",
+			filePath
+		]);
+		return Math.round(Number.parseFloat(stdout.trim()) * 1000);
+	}
+
+	private async assertFfmpegAvailable(): Promise<void> {
+		try {
+			await execFileAsync("ffmpeg", ["-version"]);
+			await execFileAsync("ffprobe", ["-version"]);
+		} catch {
+			throw new Error(
+				"ffmpeg and ffprobe are required for timeline composition. Install them: https://ffmpeg.org/download.html"
+			);
+		}
+	}
+}
+
+// ============================================================================
 // Playwright Fixture
 // ============================================================================
 
@@ -1642,9 +2046,61 @@ function wrapLocatorWithMarketingActions(
  * cursor, click ripples, and typing effects out of the box.
  *
  * Banners persist across navigations via addInitScript + sessionStorage.
- * Audio should be composed in post-production (see composeVideo).
+ *
+ * Optionally destructure `timeline` to enable segment-based recording
+ * with post-production audio composition.
+ *
+ * Recording does NOT start automatically — call `timeline.start()` when
+ * you're ready. This lets you set up test data (create users, seed a
+ * project, etc.) without recording that setup:
+ *
+ * ```ts
+ * test("demo", async ({ page, timeline }) => {
+ *   // Setup — not recorded
+ *   await page.goto("https://app.example.com/setup");
+ *   await createDemoUser(page);
+ *
+ *   // Start recording
+ *   await timeline.start();
+ *   await timeline.playAudio({ text: "Welcome" });
+ *   await page.goto("https://app.example.com");
+ * });
+ * // → marketing-videos/demo.mp4 is composed automatically
+ * ```
  */
-export const test = base.extend<{ page: Page }>({
+export const test = base.extend<{ page: Page; timeline: Timeline }>({
+	timeline: [
+		async ({ page }, use, testInfo) => {
+			const segmentsDir = testInfo.outputPath("timeline-segments");
+
+			const timeline = new Timeline({
+				page,
+				outputDir: segmentsDir
+			});
+
+			await use(timeline);
+
+			// Only compose if recording was started
+			if (timeline.getSegments().length > 0) {
+				await timeline.stop();
+
+				const slug = testInfo.title
+					.toLowerCase()
+					.replace(/\s+/g, "-")
+					.replace(/[^a-z0-9-]/g, "");
+				const outputPath = testInfo.outputPath(`${slug}.mp4`);
+
+				await timeline.compose(outputPath);
+
+				await testInfo.attach("marketing-video", {
+					path: outputPath,
+					contentType: "video/mp4"
+				});
+			}
+		},
+		{ auto: false }
+	],
+
 	page: async ({ page }, use) => {
 		// Re-inject banner on every navigation from window.name
 		await page.addInitScript(() => {
