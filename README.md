@@ -1,46 +1,65 @@
 <p align="center">
-  <img src="https://ltmdiiguvlmrsihp.public.blob.vercel-storage.com/logos/playwright-marketing-videos.svg" alt="playwright-marketing-videos" width="120" />
+  <img src="//wsrv.nl/?url=https://ltmdiiguvlmrsihp.public.blob.vercel-storage.com/logos/playwright-marketing-video-new.png&h=300" alt="playwright-marketing-videos" width="300" />
 </p>
 
-<h1 align="center">playwright-marketing-videos</h1>
+<h1>Playwright Marketing Videos</h1>
 
-<p align="center">
+<p>
+  <strong>The Problem:</strong> Fast-paced SaaS products change frequently—sometimes several times a week. Traditional screencast software is either video-input based (requiring manual re-recording after every release) or lacks essential features for polished marketing videos. We needed a <strong>development-driven solution</strong> that reacts to UI changes instantly.
+</p>
+
+<p>
+  <strong>The Solution:</strong> Playwright Marketing Videos lets you define screencasts as code. Update your UI? Your screencast updates automatically. No manual video editing, no re-recording—just run your test suite and deploy.
+</p>
+
+<p>
   Playwright tools for creating polished marketing videos with realistic mouse movements, typing animations, audio voice-overs, AI video overlays, banners, and element highlights.
 </p>
 
-<p align="center">
+<p>
   Drop-in replacement for <code>@playwright/test</code> that automatically enhances every page interaction with smooth, human-like animations — perfect for product demos, feature showcases, and marketing screencasts.
 </p>
 
 ## Table of Contents
 
+- [Table of Contents](#table-of-contents)
 - [Quick Example](#quick-example)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Playwright Config](#playwright-config)
 - [Examples](#examples)
+  - [Full Product Demo with Voice-Over](#full-product-demo-with-voice-over)
+  - [AI Video Intro with Voice-Over](#ai-video-intro-with-voice-over)
+  - [Background Audio While Interacting](#background-audio-while-interacting)
+  - [Multiple Video Overlays in Sequence](#multiple-video-overlays-in-sequence)
+  - [Pre-existing Video from URL](#pre-existing-video-from-url)
+  - [Vertical Video for Mobile](#vertical-video-for-mobile)
+  - [ElevenLabs Premium Voice-Over](#elevenlabs-premium-voice-over)
 - [Audio / Voice-Over](#audio--voice-over)
-  - [Kokoro (Default)](#kokoro-default--free--local)
+  - [Kokoro (Default — Free \& Local)](#kokoro-default--free--local)
   - [ElevenLabs](#elevenlabs)
-  - [generateAudioLayer](#generateaudiolayeroptions)
-  - [playAudio](#playaudiopage-audiolayer-waitforaudiotofinish)
+  - [`generateAudioLayer(options)`](#generateaudiolayeroptions)
+  - [`playAudio(page, audioLayer, waitForAudioToFinish?)`](#playaudiopage-audiolayer-waitforaudiotofinish)
   - [Audio Cache](#audio-cache)
   - [Migrating from v0.2.x](#migrating-from-v02x)
 - [Video Overlays](#video-overlays)
-  - [Runway (Default)](#runway-default-provider)
+  - [Runway (Default Provider)](#runway-default-provider)
   - [URL (Pre-existing Videos)](#url-pre-existing-videos)
-  - [generateVideoOverlay](#generatevideooverlayoptions)
-  - [playVideoOverlay](#playvideooverlaypage-overlay-waitforvideotofinish)
+  - [`generateVideoOverlay(options)`](#generatevideooverlayoptions)
+  - [`playVideoOverlay(page, overlay, waitForVideoToFinish?)`](#playvideooverlaypage-overlay-waitforvideotofinish)
   - [Custom Video Providers](#custom-video-providers)
   - [Video Cache](#video-cache)
 - [API](#api)
-  - [test / expect](#test--expect)
-  - [showBanner](#showbannerpage-title-options)
-  - [highlightElement](#highlightelementpage-locator-options)
-  - [moveMouse](#movemousepage-options)
-  - [moveMouseInNiceCurve](#movemouseinnicecurvepage-start-end-options)
-  - [animatedType](#animatedtypepage-locator-text)
-  - [showClickAnimation](#showclickanimationpage-point)
+  - [`test` / `expect`](#test--expect)
+  - [`showBanner(page, title, options?)`](#showbannerpage-title-options)
+  - [`showChapter(page, title, options?)`](#showchapterpage-title-options)
+  - [`startScreencast(page, options?)` / `stopScreencast(page)`](#startscreencastpage-options--stopscreencastpage)
+  - [`showActionAnnotations(page, options?)`](#showactionannotationspage-options)
+  - [`highlightElement(page, locator, options?)`](#highlightelementpage-locator-options)
+  - [`moveMouse(page, options)`](#movemousepage-options)
+  - [`moveMouseInNiceCurve(page, start, end, options?)`](#movemouseinnicecurvepage-start-end-options)
+  - [`animatedType(page, locator, text)`](#animatedtypepage-locator-text)
+  - [`showClickAnimation(page, point)`](#showclickanimationpage-point)
   - [Cursor Management](#cursor-management)
   - [Scroll Animations](#scroll-animations)
 - [Types](#types)
@@ -694,18 +713,18 @@ Extended Playwright test fixture. When you use `test` from this package, all pag
 
 The cursor icon changes contextually: arrow (default), pointer (over buttons/links), text cursor (over inputs).
 
-### `showBanner(page, options)`
+### `showBanner(page, title, options?)`
 
-Displays a full-screen banner overlay using Playwright v1.59's screencast overlay API.
-Banners now persist across navigations automatically.
+Displays a full-screen banner overlay with fade-in/out animations.
 
 ```ts
-await showBanner(page, {
-  text: "Feature Showcase",
-  duration: 3000,        // Display duration in ms
+await showBanner(page, "Feature Showcase", {
+  duration: 3000,        // Display duration in ms (default: 2000)
+  fadeInMs: 500,         // Fade-in duration (default: 300)
+  fadeOutMs: 500,        // Fade-out duration (default: 300)
   backgroundColor: "#1e212b", // Background color (default: "#1e212b")
   textColor: "#ffffff",  // Text color (default: "#ffffff")
-  fontSize: "48px",      // Font size (default: "32px")
+  fontSize: "48px",      // Font size (default: "48px")
   callback: async () => {
     // Optional: runs while the banner is shown (e.g. navigate to a page)
     await page.goto("https://your-app.com");

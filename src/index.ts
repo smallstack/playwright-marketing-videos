@@ -30,16 +30,19 @@ export type KokoroOptions = {
 };
 
 export type GenerateAudioLayerOptions =
-	| ({ provider?: "kokoro"; text: string } & KokoroOptions)
+	| ({ provider?: "kokoro"; text: string; cacheDir?: string } & KokoroOptions)
 	| {
 			provider: "elevenlabs";
 			text: string;
 			voiceId: string;
 			modelId?: string;
+			cacheDir?: string;
 	  };
 
 export type ShowBannerOptions = {
 	duration?: number;
+	fadeInMs?: number;
+	fadeOutMs?: number;
 	fadeOut?: boolean;
 	backgroundColor?: string;
 	textColor?: string;
@@ -84,6 +87,7 @@ export type GenerateVideoOverlayOptions = {
 	durationSec?: number;
 	aspectRatio?: "16:9" | "9:16";
 	provider?: VideoProvider;
+	cacheDir?: string;
 };
 
 /**
@@ -687,30 +691,76 @@ export async function highlightElement(
 // Banner Animation
 // ============================================================================
 
-function createBannerHtml(params: {
+function createBannerScript(params: {
 	title: string;
 	backgroundColor: string;
 	textColor: string;
 	fontSize: string;
+	initialOpacity: string;
+	fadeInMs?: number;
 	logoUrl?: string;
 	logoText?: string;
 }): string {
-	let logoHtml = "";
+	const transition = params.fadeInMs
+		? `transition: opacity ${params.fadeInMs}ms ease-out !important;`
+		: "";
+
+	let logoScript = "";
 	if (params.logoUrl || params.logoText) {
-		const logoImgHtml = params.logoUrl
-			? `<img src="${params.logoUrl}" style="height: 64px; width: auto; object-fit: contain; margin: 0; padding: 0; flex-shrink: 0;" />`
-			: "";
-		const logoTextHtml = params.logoText
-			? `<div style="font-size: 64px; font-weight: 700; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; letter-spacing: -0.3px; margin: 0; padding: 0; line-height: 1; flex-shrink: 0; opacity: 0.85;">${params.logoText}</div>`
-			: "";
-		logoHtml = `<div style="display: flex; align-items: center; justify-content: center; gap: 12px; margin: 0 0 24px 0; padding: 0; flex-shrink: 0;">${logoImgHtml}${logoTextHtml}</div>`;
+		logoScript += `
+		var logoContainer = document.createElement("div");
+		logoContainer.style.cssText = "display: flex !important; align-items: center !important; justify-content: center !important; gap: 12px !important; margin: 0 0 24px 0 !important; padding: 0 !important; flex-shrink: 0 !important;";
+		`;
+
+		if (params.logoUrl) {
+			logoScript += `
+		var logoImg = document.createElement("img");
+		logoImg.src = "${params.logoUrl}";
+		logoImg.style.cssText = "height: 64px !important; width: auto !important; object-fit: contain !important; margin: 0 !important; padding: 0 !important; flex-shrink: 0 !important;";
+		logoContainer.appendChild(logoImg);
+			`;
+		}
+
+		if (params.logoText) {
+			logoScript += `
+		var logoTextEl = document.createElement("div");
+		logoTextEl.style.cssText = "font-size: 64px !important; font-weight: 700 !important; text-align: center !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important; letter-spacing: -0.3px !important; margin: 0 !important; padding: 0 !important; line-height: 1 !important; flex-shrink: 0 !important; opacity: 0.85 !important;";
+		logoTextEl.textContent = "${params.logoText}";
+		logoContainer.appendChild(logoTextEl);
+			`;
+		}
+
+		logoScript += `
+		banner.appendChild(logoContainer);
+		`;
 	}
 
+	const fadeInScript = params.fadeInMs
+		? `
+		setTimeout(function() {
+			banner.style.opacity = "1";
+		}, 50);
+		`
+		: "";
+
 	return `
-		<div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100vw; height: 100vh; margin: 0; padding: 0; background: ${params.backgroundColor}; color: ${params.textColor}; z-index: 2147483647; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; box-sizing: border-box; border: none; outline: none; pointer-events: none;">
-			${logoHtml}
-			<div style="font-size: ${params.fontSize}; font-weight: 600; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2); letter-spacing: -0.5px; margin: 0; padding: 0; line-height: 1.2; flex-shrink: 0;">${params.title}</div>
-		</div>
+		var oldBanner = document.getElementById("playwright-marketing-banner");
+		if (oldBanner) oldBanner.remove();
+
+		var banner = document.createElement("div");
+		banner.id = "playwright-marketing-banner";
+		banner.style.cssText = "position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important; width: 100vw !important; height: 100vh !important; margin: 0 !important; padding: 0 !important; background: ${params.backgroundColor} !important; color: ${params.textColor} !important; z-index: 2147483647 !important; opacity: ${params.initialOpacity} !important; ${transition} display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important; gap: 0 !important; box-sizing: border-box !important; border: none !important; outline: none !important; pointer-events: none !important;";
+
+		${logoScript}
+
+		var titleElement = document.createElement("div");
+		titleElement.style.cssText = "font-size: ${params.fontSize} !important; font-weight: 600 !important; text-align: center !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2) !important; letter-spacing: -0.5px !important; margin: 0 !important; padding: 0 !important; line-height: 1.2 !important; flex-shrink: 0 !important;";
+		titleElement.textContent = "${params.title}";
+		banner.appendChild(titleElement);
+
+		document.body.appendChild(banner);
+
+		${fadeInScript}
 	`;
 }
 
@@ -719,33 +769,81 @@ export async function showBanner(
 	options: ShowBannerOptions
 ): Promise<void> {
 	const duration = options?.duration;
+	const fadeInMs = options?.fadeInMs ?? 300;
+	const fadeOutMs = options?.fadeOutMs ?? 300;
 	const backgroundColor = options?.backgroundColor ?? "#1e212b";
 	const textColor = options?.textColor ?? "#ffffff";
 	const fontSize = options?.fontSize ?? "32px";
 
-	const bannerHtml = createBannerHtml({
-		title: options.text,
-		backgroundColor,
-		textColor,
-		fontSize,
-		logoUrl: options.logoUrl,
-		logoText: options.logoText
-	});
-
-	// Screencast overlays persist across navigations automatically —
-	// no window.name hack needed.
-	const overlay = await page.screencast.showOverlay(bannerHtml);
-
 	if (options?.callback) {
+		const bannerParams = {
+			title: options.text,
+			backgroundColor,
+			textColor,
+			fontSize,
+			initialOpacity: "1",
+			logoUrl: options.logoUrl,
+			logoText: options.logoText
+		};
+
+		await page.evaluate(createBannerScript(bannerParams));
+
+		// Save banner HTML to window.name so the addInitScript
+		// can re-inject it instantly on any navigation during the callback
+		await page.evaluate(() => {
+			const banner = document.getElementById("playwright-marketing-banner");
+			if (banner) {
+				window.name = "__pmv:" + banner.outerHTML;
+			}
+		});
+
 		await options.callback();
+
 		await page.waitForLoadState("domcontentloaded");
 		await page.waitForLoadState("networkidle");
-	}
 
+		// Clear persistence flag — banner is already in the current DOM
+		await page.evaluate(() => {
+			window.name = "";
+		});
+	} else {
+		await page.evaluate(
+			createBannerScript({
+				title: options.text,
+				backgroundColor,
+				textColor,
+				fontSize,
+				initialOpacity: "0",
+				fadeInMs,
+				logoUrl: options.logoUrl,
+				logoText: options.logoText
+			})
+		);
+
+		await page.waitForTimeout(fadeInMs);
+	}
 	if (duration !== undefined) await page.waitForTimeout(duration);
 
 	if (options?.fadeOut !== false) {
-		await overlay.dispose();
+		await page.evaluate(
+			({ fadeOutMs }) => {
+				const banner = document.getElementById("playwright-marketing-banner");
+				if (banner) {
+					banner.style.transition = `opacity ${fadeOutMs}ms ease-in`;
+					banner.style.opacity = "0";
+				}
+			},
+			{ fadeOutMs }
+		);
+
+		await page.waitForTimeout(fadeOutMs);
+
+		await page.evaluate(() => {
+			const banner = document.getElementById("playwright-marketing-banner");
+			if (banner) {
+				banner.remove();
+			}
+		});
 	}
 }
 
@@ -774,7 +872,8 @@ let kokoroInstance: any = null;
 export async function generateAudioLayer(
 	options: GenerateAudioLayerOptions
 ): Promise<AudioLayer> {
-	const cacheDir = path.join(process.cwd(), "__audio_cache");
+	const cacheDir =
+		options.cacheDir ?? path.join(process.cwd(), "__audio_cache");
 	if (!fs.existsSync(cacheDir)) {
 		fs.mkdirSync(cacheDir, { recursive: true });
 	}
@@ -1317,7 +1416,8 @@ export async function generateVideoOverlay(
 		provider = defaultVideoProvider
 	} = options;
 
-	const cacheDir = path.join(process.cwd(), "__video_cache");
+	const cacheDir =
+		options.cacheDir ?? path.join(process.cwd(), "__video_cache");
 
 	if (!fs.existsSync(cacheDir)) {
 		fs.mkdirSync(cacheDir, { recursive: true });
@@ -1541,12 +1641,34 @@ function wrapLocatorWithMarketingActions(
  * Use this instead of `@playwright/test`'s `test` to get animated
  * cursor, click ripples, and typing effects out of the box.
  *
- * Banners now use Playwright v1.59's screencast overlay API and
- * persist across navigations automatically.
+ * Banners persist across navigations via addInitScript + sessionStorage.
  * Audio should be composed in post-production (see composeVideo).
  */
 export const test = base.extend<{ page: Page }>({
 	page: async ({ page }, use) => {
+		// Re-inject banner on every navigation from window.name
+		await page.addInitScript(() => {
+			try {
+				if (window.name?.startsWith("__pmv:")) {
+					const bannerHtml = window.name.substring(6);
+					const inject = () => {
+						if (!document.getElementById("playwright-marketing-banner")) {
+							document.body.insertAdjacentHTML("beforeend", bannerHtml);
+						}
+					};
+					if (document.body) {
+						inject();
+					} else {
+						document.addEventListener("DOMContentLoaded", inject, {
+							once: true
+						});
+					}
+				}
+			} catch (_) {
+				// ignore
+			}
+		});
+
 		await addVisibleCursor(page);
 
 		const originalLocator = page.locator.bind(page);
