@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import {
 	test as base,
+	type Disposable,
 	expect,
 	type Locator,
 	type Page
@@ -39,8 +40,6 @@ export type GenerateAudioLayerOptions =
 
 export type ShowBannerOptions = {
 	duration?: number;
-	fadeInMs?: number;
-	fadeOutMs?: number;
 	fadeOut?: boolean;
 	backgroundColor?: string;
 	textColor?: string;
@@ -291,12 +290,11 @@ export async function updateCursorPosition(
 // Animations
 // ============================================================================
 
-export async function showScrollAnimation(page: Page): Promise<void> {
-	await page.evaluate(() => {
-		const scrollIndicator = document.createElement("div");
-		scrollIndicator.id = "scroll-indicator";
+let scrollOverlayDisposable: Disposable | null = null;
 
-		scrollIndicator.style.cssText = `
+export async function showScrollAnimation(page: Page): Promise<void> {
+	scrollOverlayDisposable = await page.screencast.showOverlay(`
+		<div style="
 			position: fixed;
 			left: 50%;
 			top: 50%;
@@ -306,9 +304,7 @@ export async function showScrollAnimation(page: Page): Promise<void> {
 			pointer-events: none;
 			z-index: 2147483646;
 			overflow: visible;
-		`;
-
-		scrollIndicator.innerHTML = `
+		">
 			<svg width="80" height="100" viewBox="-10 -10 70 90" xmlns="http://www.w3.org/2000/svg">
 				<rect x="10" y="5" width="30" height="50" rx="15" fill="none" stroke="white" stroke-width="3"
 					style="filter: drop-shadow(0 0 8px rgba(0,0,0,0.6))"/>
@@ -316,17 +312,15 @@ export async function showScrollAnimation(page: Page): Promise<void> {
 					<animate attributeName="cy" values="20;35;20" dur="1.5s" repeatCount="indefinite" begin="0s"/>
 				</circle>
 			</svg>
-		`;
-
-		document.body.appendChild(scrollIndicator);
-		void scrollIndicator.offsetHeight;
-	});
+		</div>
+	`);
 }
 
-export async function hideScrollAnimation(page: Page): Promise<void> {
-	await page.evaluate(() => {
-		document.getElementById("scroll-indicator")?.remove();
-	});
+export async function hideScrollAnimation(_page?: Page): Promise<void> {
+	if (scrollOverlayDisposable) {
+		await scrollOverlayDisposable.dispose();
+		scrollOverlayDisposable = null;
+	}
 }
 
 export async function showClickAnimation(
@@ -661,26 +655,19 @@ export async function highlightElement(
 	const box = await locator.boundingBox();
 	if (!box) return;
 
-	await page.evaluate(
-		({ box, borderColor, borderWidth, zoomScale, screenshot }) => {
-			const overlay = document.createElement("div");
-			overlay.id = "playwright-highlight-overlay";
-			overlay.style.cssText = `
-				position: fixed;
-				left: ${box.x}px;
-				top: ${box.y}px;
-				width: ${box.width}px;
-				height: ${box.height}px;
-				pointer-events: none;
-				z-index: 2147483647;
-				transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-				transform-origin: center center;
-				transform: scale(1);
-			`;
-
-			const img = document.createElement("img");
-			img.src = `data:image/png;base64,${screenshot}`;
-			img.style.cssText = `
+	const overlay = await page.screencast.showOverlay(`
+		<div style="
+			position: fixed;
+			left: ${box.x}px;
+			top: ${box.y}px;
+			width: ${box.width}px;
+			height: ${box.height}px;
+			pointer-events: none;
+			z-index: 2147483647;
+			transform-origin: center center;
+			transform: scale(${zoomScale});
+		">
+			<img src="data:image/png;base64,${screenshotBase64}" style="
 				width: 100%;
 				height: 100%;
 				display: block;
@@ -688,119 +675,42 @@ export async function highlightElement(
 				outline: ${borderWidth}px solid ${borderColor};
 				outline-offset: 2px;
 				box-shadow: 0 0 20px 4px ${borderColor}80, 0 0 40px 8px ${borderColor}40;
-			`;
-
-			overlay.appendChild(img);
-			document.body.appendChild(overlay);
-
-			setTimeout(() => {
-				overlay.style.transform = `scale(${zoomScale})`;
-			}, 50);
-		},
-		{
-			box,
-			borderColor,
-			borderWidth,
-			zoomScale,
-			screenshot: screenshotBase64
-		}
-	);
+			" />
+		</div>
+	`);
 
 	await page.waitForTimeout(350 + duration);
-
-	await page.evaluate(() => {
-		const overlay = document.getElementById("playwright-highlight-overlay");
-		if (overlay) {
-			overlay.style.transition = "all 0.3s ease-out";
-			overlay.style.transform = "scale(1)";
-			overlay.style.opacity = "0";
-		}
-	});
-
-	await page.waitForTimeout(300);
-
-	await page.evaluate(() => {
-		const overlay = document.getElementById("playwright-highlight-overlay");
-		if (overlay) {
-			overlay.remove();
-		}
-	});
+	await overlay.dispose();
 }
 
 // ============================================================================
 // Banner Animation
 // ============================================================================
 
-function createBannerScript(params: {
+function createBannerHtml(params: {
 	title: string;
 	backgroundColor: string;
 	textColor: string;
 	fontSize: string;
-	initialOpacity: string;
-	fadeInMs?: number;
 	logoUrl?: string;
 	logoText?: string;
 }): string {
-	const transition = params.fadeInMs
-		? `transition: opacity ${params.fadeInMs}ms ease-out !important;`
-		: "";
-
-	let logoScript = "";
+	let logoHtml = "";
 	if (params.logoUrl || params.logoText) {
-		logoScript += `
-		var logoContainer = document.createElement("div");
-		logoContainer.style.cssText = "display: flex !important; align-items: center !important; justify-content: center !important; gap: 12px !important; margin: 0 0 24px 0 !important; padding: 0 !important; flex-shrink: 0 !important;";
-		`;
-
-		if (params.logoUrl) {
-			logoScript += `
-		var logoImg = document.createElement("img");
-		logoImg.src = "${params.logoUrl}";
-		logoImg.style.cssText = "height: 64px !important; width: auto !important; object-fit: contain !important; margin: 0 !important; padding: 0 !important; flex-shrink: 0 !important;";
-		logoContainer.appendChild(logoImg);
-			`;
-		}
-
-		if (params.logoText) {
-			logoScript += `
-		var logoTextEl = document.createElement("div");
-		logoTextEl.style.cssText = "font-size: 64px !important; font-weight: 700 !important; text-align: center !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important; letter-spacing: -0.3px !important; margin: 0 !important; padding: 0 !important; line-height: 1 !important; flex-shrink: 0 !important; opacity: 0.85 !important;";
-		logoTextEl.textContent = "${params.logoText}";
-		logoContainer.appendChild(logoTextEl);
-			`;
-		}
-
-		logoScript += `
-		banner.appendChild(logoContainer);
-		`;
+		const logoImgHtml = params.logoUrl
+			? `<img src="${params.logoUrl}" style="height: 64px; width: auto; object-fit: contain; margin: 0; padding: 0; flex-shrink: 0;" />`
+			: "";
+		const logoTextHtml = params.logoText
+			? `<div style="font-size: 64px; font-weight: 700; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; letter-spacing: -0.3px; margin: 0; padding: 0; line-height: 1; flex-shrink: 0; opacity: 0.85;">${params.logoText}</div>`
+			: "";
+		logoHtml = `<div style="display: flex; align-items: center; justify-content: center; gap: 12px; margin: 0 0 24px 0; padding: 0; flex-shrink: 0;">${logoImgHtml}${logoTextHtml}</div>`;
 	}
 
-	const fadeInScript = params.fadeInMs
-		? `
-		setTimeout(function() {
-			banner.style.opacity = "1";
-		}, 50);
-		`
-		: "";
-
 	return `
-		var oldBanner = document.getElementById("playwright-marketing-banner");
-		if (oldBanner) oldBanner.remove();
-
-		var banner = document.createElement("div");
-		banner.id = "playwright-marketing-banner";
-		banner.style.cssText = "position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important; width: 100vw !important; height: 100vh !important; margin: 0 !important; padding: 0 !important; background: ${params.backgroundColor} !important; color: ${params.textColor} !important; z-index: 2147483647 !important; opacity: ${params.initialOpacity} !important; ${transition} display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important; gap: 0 !important; box-sizing: border-box !important; border: none !important; outline: none !important; pointer-events: none !important;";
-
-		${logoScript}
-
-		var titleElement = document.createElement("div");
-		titleElement.style.cssText = "font-size: ${params.fontSize} !important; font-weight: 600 !important; text-align: center !important; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2) !important; letter-spacing: -0.5px !important; margin: 0 !important; padding: 0 !important; line-height: 1.2 !important; flex-shrink: 0 !important;";
-		titleElement.textContent = "${params.title}";
-		banner.appendChild(titleElement);
-
-		document.body.appendChild(banner);
-
-		${fadeInScript}
+		<div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100vw; height: 100vh; margin: 0; padding: 0; background: ${params.backgroundColor}; color: ${params.textColor}; z-index: 2147483647; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; box-sizing: border-box; border: none; outline: none; pointer-events: none;">
+			${logoHtml}
+			<div style="font-size: ${params.fontSize}; font-weight: 600; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2); letter-spacing: -0.5px; margin: 0; padding: 0; line-height: 1.2; flex-shrink: 0;">${params.title}</div>
+		</div>
 	`;
 }
 
@@ -809,81 +719,33 @@ export async function showBanner(
 	options: ShowBannerOptions
 ): Promise<void> {
 	const duration = options?.duration;
-	const fadeInMs = options?.fadeInMs ?? 300;
-	const fadeOutMs = options?.fadeOutMs ?? 300;
 	const backgroundColor = options?.backgroundColor ?? "#1e212b";
 	const textColor = options?.textColor ?? "#ffffff";
 	const fontSize = options?.fontSize ?? "32px";
 
+	const bannerHtml = createBannerHtml({
+		title: options.text,
+		backgroundColor,
+		textColor,
+		fontSize,
+		logoUrl: options.logoUrl,
+		logoText: options.logoText
+	});
+
+	// Screencast overlays persist across navigations automatically —
+	// no window.name hack needed.
+	const overlay = await page.screencast.showOverlay(bannerHtml);
+
 	if (options?.callback) {
-		const bannerParams = {
-			title: options.text,
-			backgroundColor,
-			textColor,
-			fontSize,
-			initialOpacity: "1",
-			logoUrl: options.logoUrl,
-			logoText: options.logoText
-		};
-
-		await page.evaluate(createBannerScript(bannerParams));
-
-		// Save banner HTML to window.name so the addInitScript
-		// can re-inject it instantly on any navigation during the callback
-		await page.evaluate(() => {
-			const banner = document.getElementById("playwright-marketing-banner");
-			if (banner) {
-				window.name = "__pmv:" + banner.outerHTML;
-			}
-		});
-
 		await options.callback();
-
 		await page.waitForLoadState("domcontentloaded");
 		await page.waitForLoadState("networkidle");
-
-		// Clear persistence flag — banner is already in the current DOM
-		await page.evaluate(() => {
-			window.name = "";
-		});
-	} else {
-		await page.evaluate(
-			createBannerScript({
-				title: options.text,
-				backgroundColor,
-				textColor,
-				fontSize,
-				initialOpacity: "0",
-				fadeInMs,
-				logoUrl: options.logoUrl,
-				logoText: options.logoText
-			})
-		);
-
-		await page.waitForTimeout(fadeInMs);
 	}
+
 	if (duration !== undefined) await page.waitForTimeout(duration);
 
 	if (options?.fadeOut !== false) {
-		await page.evaluate(
-			({ fadeOutMs }) => {
-				const banner = document.getElementById("playwright-marketing-banner");
-				if (banner) {
-					banner.style.transition = `opacity ${fadeOutMs}ms ease-in`;
-					banner.style.opacity = "0";
-				}
-			},
-			{ fadeOutMs }
-		);
-
-		await page.waitForTimeout(fadeOutMs);
-
-		await page.evaluate(() => {
-			const banner = document.getElementById("playwright-marketing-banner");
-			if (banner) {
-				banner.remove();
-			}
-		});
+		await overlay.dispose();
 	}
 }
 
@@ -1511,86 +1373,125 @@ export async function generateVideoOverlay(
  */
 export async function playVideoOverlay(
 	page: Page,
-	overlay: VideoOverlay,
+	videoOverlay: VideoOverlay,
 	waitForVideoToFinish: boolean = true
 ): Promise<void> {
-	const videoBuffer = fs.readFileSync(overlay.filePath);
+	const videoBuffer = fs.readFileSync(videoOverlay.filePath);
 	const videoBase64 = videoBuffer.toString("base64");
 
 	await hideCursor(page);
 
-	await page.evaluate(
-		({ video }) => {
-			const oldVideo = document.getElementById(
-				"playwright-marketing-video-overlay"
-			);
-			if (oldVideo) oldVideo.remove();
+	const overlay = await page.screencast.showOverlay(`
+		<video
+			style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 2147483647; pointer-events: none; margin: 0; padding: 0; border: none;"
+			src="data:video/mp4;base64,${videoBase64}"
+			muted
+			autoplay
+			playsinline
+		></video>
+	`);
 
-			const videoElement = document.createElement("video");
-			videoElement.id = "playwright-marketing-video-overlay";
-			videoElement.style.cssText = `
-				position: fixed !important;
-				top: 0 !important;
-				left: 0 !important;
-				width: 100vw !important;
-				height: 100vh !important;
-				object-fit: cover !important;
-				z-index: 2147483647 !important;
-				pointer-events: none !important;
-				margin: 0 !important;
-				padding: 0 !important;
-				border: none !important;
-			`;
-
-			videoElement.src = `data:video/mp4;base64,${video}`;
-			videoElement.muted = true;
-			videoElement.autoplay = false;
-			videoElement.playsInline = true;
-
-			document.body.appendChild(videoElement);
-		},
-		{ video: videoBase64 }
-	);
-
-	const duration = await page.evaluate(() => {
-		const videoElement = document.getElementById(
-			"playwright-marketing-video-overlay"
-		) as HTMLVideoElement;
-		return new Promise<number>((resolve) => {
-			if (videoElement.duration && !Number.isNaN(videoElement.duration)) {
-				resolve(videoElement.duration * 1000);
-			} else {
-				videoElement.addEventListener("loadedmetadata", () => {
-					resolve(videoElement.duration * 1000);
-				});
-			}
-		});
-	});
-
-	await page.waitForTimeout(100);
-
-	await page.evaluate(async () => {
-		await (
-			document.getElementById(
-				"playwright-marketing-video-overlay"
-			) as HTMLVideoElement
-		).play();
-	});
-
-	if (waitForVideoToFinish && !Number.isNaN(duration) && duration > 0) {
-		await page.waitForTimeout(duration);
-
-		await page.evaluate(() => {
-			const videoElement = document.getElementById(
-				"playwright-marketing-video-overlay"
-			);
-			if (videoElement) {
-				videoElement.remove();
-			}
-		});
+	if (waitForVideoToFinish) {
+		const durationMs = videoOverlay.durationSec * 1000;
+		if (durationMs > 0) {
+			await page.waitForTimeout(durationMs);
+			await overlay.dispose();
+		}
 	}
 
 	await showCursor(page);
+}
+
+// ============================================================================
+// Screencast Helpers
+// ============================================================================
+
+export type ShowChapterOptions = {
+	description?: string;
+	duration?: number;
+};
+
+/**
+ * Shows a chapter overlay with a title and optional description, centered on the
+ * page with a blurred backdrop — ideal for section titles in marketing videos.
+ * The overlay is automatically removed after the specified duration (default 2000ms).
+ *
+ * Uses Playwright v1.59's `page.screencast.showChapter()` API.
+ */
+export async function showChapter(
+	page: Page,
+	title: string,
+	options?: ShowChapterOptions
+): Promise<void> {
+	await page.screencast.showChapter(title, {
+		description: options?.description,
+		duration: options?.duration ?? 2000
+	});
+}
+
+/**
+ * Enables visual action annotations on the screencast. Each Playwright action
+ * (click, fill, etc.) will be annotated on the video recording with a label.
+ * Returns a Disposable that can be used to stop showing actions.
+ *
+ * Uses Playwright v1.59's `page.screencast.showActions()` API.
+ */
+export async function showActionAnnotations(
+	page: Page,
+	options?: {
+		duration?: number;
+		fontSize?: number;
+		position?:
+			| "top-left"
+			| "top"
+			| "top-right"
+			| "bottom-left"
+			| "bottom"
+			| "bottom-right";
+	}
+): Promise<Disposable> {
+	return page.screencast.showActions(options);
+}
+
+export type ScreencastOptions = {
+	path?: string;
+	size?: { width: number; height: number };
+	quality?: number;
+};
+
+/**
+ * Starts high-resolution screencast recording using Playwright v1.59's
+ * screencast API. This replaces the older `video` config approach and
+ * gives direct control over resolution and quality.
+ *
+ * Call `stopScreencast(page)` or dispose the returned Disposable to stop recording.
+ *
+ * @example
+ * ```ts
+ * const recording = await startScreencast(page, {
+ *   path: 'marketing-video.webm',
+ *   size: { width: 1920, height: 1080 },
+ * });
+ * // ... perform actions ...
+ * await recording.dispose(); // or await stopScreencast(page);
+ * ```
+ */
+export async function startScreencast(
+	page: Page,
+	options?: ScreencastOptions
+): Promise<Disposable> {
+	return page.screencast.start({
+		path: options?.path,
+		size: options?.size ?? { width: 1920, height: 1080 },
+		quality: options?.quality
+	});
+}
+
+/**
+ * Stops the screencast recording on the given page.
+ */
+export async function stopScreencast(page: Page): Promise<void> {
+	await page.screencast.stop();
 }
 
 // ============================================================================
@@ -1640,34 +1541,12 @@ function wrapLocatorWithMarketingActions(
  * Use this instead of `@playwright/test`'s `test` to get animated
  * cursor, click ripples, and typing effects out of the box.
  *
- * Banners persist across navigations via addInitScript + sessionStorage.
+ * Banners now use Playwright v1.59's screencast overlay API and
+ * persist across navigations automatically.
  * Audio should be composed in post-production (see composeVideo).
  */
 export const test = base.extend<{ page: Page }>({
 	page: async ({ page }, use) => {
-		// Re-inject banner on every navigation from window.name
-		await page.addInitScript(() => {
-			try {
-				if (window.name && window.name.startsWith("__pmv:")) {
-					const bannerHtml = window.name.substring(6);
-					const inject = () => {
-						if (!document.getElementById("playwright-marketing-banner")) {
-							document.body.insertAdjacentHTML("beforeend", bannerHtml);
-						}
-					};
-					if (document.body) {
-						inject();
-					} else {
-						document.addEventListener("DOMContentLoaded", inject, {
-							once: true
-						});
-					}
-				}
-			} catch (_) {
-				// ignore
-			}
-		});
-
 		await addVisibleCursor(page);
 
 		const originalLocator = page.locator.bind(page);

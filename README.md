@@ -127,7 +127,9 @@ test("product demo", async ({ page }) => {
 
 ## Playwright Config
 
-Create a dedicated Playwright config for marketing videos:
+Create a dedicated Playwright config for marketing videos.
+
+Since v1.59, you can use the **screencast API** for higher-resolution recordings with more control:
 
 ```ts
 // playwright.marketing.config.ts
@@ -137,17 +139,39 @@ export default defineConfig({
   testMatch: "**/*.marketing-video.ts",
   use: {
     ...devices["Desktop Chrome"],
-    viewport: { width: 1280, height: 720 },
-    video: {
-      mode: "on",
-      size: { width: 1280, height: 720 }
-    },
+    viewport: { width: 1920, height: 1080 },
     screenshot: "off",
     locale: "en-US"
   },
   timeout: 120_000,
   outputDir: "marketing-videos"
 });
+```
+
+Then use `startScreencast()` in your test for full control over resolution and quality:
+
+```ts
+import { test, startScreencast, stopScreencast } from "playwright-marketing-videos";
+
+test("my marketing video", async ({ page }) => {
+  const recording = await startScreencast(page, {
+    path: "marketing-videos/demo.webm",
+    size: { width: 1920, height: 1080 },
+  });
+
+  // ... perform actions ...
+
+  await recording.dispose(); // or: await stopScreencast(page);
+});
+```
+
+Alternatively, the classic `video` config still works:
+
+```ts
+use: {
+  viewport: { width: 1920, height: 1080 },
+  video: { mode: "on", size: { width: 1920, height: 1080 } },
+},
 ```
 
 Run with:
@@ -670,23 +694,65 @@ Extended Playwright test fixture. When you use `test` from this package, all pag
 
 The cursor icon changes contextually: arrow (default), pointer (over buttons/links), text cursor (over inputs).
 
-### `showBanner(page, title, options?)`
+### `showBanner(page, options)`
 
-Displays a full-screen banner overlay with fade-in/out animations.
+Displays a full-screen banner overlay using Playwright v1.59's screencast overlay API.
+Banners now persist across navigations automatically.
 
 ```ts
-await showBanner(page, "Feature Showcase", {
-  duration: 3000,        // Display duration in ms (default: 2000)
-  fadeInMs: 500,         // Fade-in duration (default: 300)
-  fadeOutMs: 500,        // Fade-out duration (default: 300)
+await showBanner(page, {
+  text: "Feature Showcase",
+  duration: 3000,        // Display duration in ms
   backgroundColor: "#1e212b", // Background color (default: "#1e212b")
   textColor: "#ffffff",  // Text color (default: "#ffffff")
-  fontSize: "48px",      // Font size (default: "48px")
+  fontSize: "48px",      // Font size (default: "32px")
   callback: async () => {
     // Optional: runs while the banner is shown (e.g. navigate to a page)
     await page.goto("https://your-app.com");
   }
 });
+```
+
+### `showChapter(page, title, options?)`
+
+Shows a chapter overlay with a blurred backdrop, centered on the page — ideal for section titles.
+Uses Playwright v1.59's built-in `screencast.showChapter()` API.
+
+```ts
+await showChapter(page, "Chapter 1: Getting Started", {
+  description: "Setting up the project",
+  duration: 3000, // default: 2000ms
+});
+```
+
+### `startScreencast(page, options?)` / `stopScreencast(page)`
+
+Start and stop high-resolution video recording using Playwright v1.59's screencast API.
+Defaults to 1920x1080 for Full HD output.
+
+```ts
+const recording = await startScreencast(page, {
+  path: "output/demo.webm",
+  size: { width: 1920, height: 1080 },
+  quality: 90,
+});
+// ... perform actions ...
+await recording.dispose(); // or: await stopScreencast(page);
+```
+
+### `showActionAnnotations(page, options?)`
+
+Enables visual action annotations on the recording. Each Playwright action is
+annotated with a label overlay.
+
+```ts
+const actions = await showActionAnnotations(page, {
+  position: "top-right",
+  fontSize: 20,
+  duration: 800,
+});
+// ... perform actions with visible annotations ...
+await actions.dispose(); // stop showing annotations
 ```
 
 When a `callback` is provided, the banner is injected before the callback runs and persists across page navigations (re-injected on every `load` event). This is useful for showing a banner during a page transition.
@@ -785,6 +851,8 @@ import type {
   GenerateVideoOverlayOptions,
   KokoroOptions,
   ShowBannerOptions,
+  ShowChapterOptions,
+  ScreencastOptions,
   HighlightElementOptions,
   MoveMouseOptions,
   MoveMouseInNiceCurveOptions,
